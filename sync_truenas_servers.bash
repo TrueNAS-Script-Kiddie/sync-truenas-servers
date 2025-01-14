@@ -11,13 +11,13 @@ declare PERFORM_ZFS_REP_ALL
 declare PERFORM_ZFS_REP_LATEST
 declare RUNNING_IN_BACKGROUND
 declare TEST_MODE
-
 declare SCRIPT_FILENAME="$(basename $0)"
 declare SCRIPT_DIR="$(dirname $0)"
 declare LOG_FILE="${SCRIPT_DIR}/../logs/${SCRIPT_FILENAME}.$(date +"%Y-%m-%d_%H-%M").log"
 declare -a BACKUP_OPTIONS=( "$@" )
-declare SSH_CONFIG_FILE="/mnt/backup-pool/homedir-ds/home/root/.ssh/config"   # TODO: remove line
-#declare SSH_CONFIG_FILE="${SCRIPT_DIR}/../.ssh/config"                       # TODO: uncomment line
+declare SSH_CONFIG_FILE="${SCRIPT_DIR}/../.ssh/config"
+[[ ! -f "${SSH_CONFIG_FILE}" ]] && SSH_CONFIG_FILE="/mnt/backup-pool/homedir-ds/home/root/.ssh/config"
+
 declare LOCAL_SERVER_ID="$(hostname -s| sed 's/^truenas-//')"
 if [[ "${LOCAL_SERVER_ID}" == "master" ]]; then
     declare REMOTE_SERVER_ID="backup"
@@ -210,7 +210,6 @@ function Perform_rsync() {
     local CONTROL_CMD
     local JOBID_STATUS_CMD
     local JOBID
-    local CONTAINER_TYPE
     local CONTAINER_NAME
     local SERVER_ID_VAR
 
@@ -229,26 +228,11 @@ function Perform_rsync() {
       ACTION_VERB="stopping"
     fi
     
-    if Execute_command "${LOCATION}" "which docker >/dev/null 2>&1"; then
-      CONTAINER_TYPE="docker"
-    elif Execute_command "${LOCATION}" "which k3s >/dev/null 2>&1"; then
-      CONTAINER_TYPE="kubernetes"
-    else
-      Background_error "Both k3s and docker were not found. Cannot ${ACTION} ${APP_NAME^}."
-    fi
-    
     SERVER_ID_VAR="${LOCATION^^}_SERVER_ID"
-    if [[ "${CONTAINER_TYPE}" == "kubernetes" ]]; then
-      STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call chart.release.query | jq -r '.[] | select(.status | test(\"ACTIVE|DEPLOYING|PAUSED|RESTARTING\")) | .id' | grep \"${APP_NAME}\"") )
-      START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call chart.release.query | jq -r '.[] | select(.status | test(\"STOPPED|FAILED|PAUSED\")) | .id' | grep \"${APP_NAME}\"") )
-      #STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call chart.release.query | jq -r '.[] | select(.status | test(\"ACTIVE|DEPLOYING|PAUSED|RESTARTING\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
-      #START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call chart.release.query | jq -r '.[] | select(.status | test(\"STOPPED|FAILED|PAUSED\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
-    elif [[ "${CONTAINER_TYPE}" == "docker" ]]; then
-      STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"RUNNING|DEPLOYING\")) | .id' | grep \"${APP_NAME}\"") )
-      START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"STOPPED|CRASHED\")) | .id' | grep \"${APP_NAME}\"") )
-      #STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"RUNNING|DEPLOYING\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
-      #START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"STOPPED|CRASHED\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
-    fi
+    STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"RUNNING|DEPLOYING\")) | .id' | grep \"${APP_NAME}\"") )
+    START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"STOPPED|CRASHED\")) | .id' | grep \"${APP_NAME}\"") )
+    #STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"RUNNING|DEPLOYING\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
+    #START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"STOPPED|CRASHED\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
 
     # Compare the array START_CONTAINER_LIST with the array ${LOCATION^^}_STOPPED_LIST for the 'start' action 
     if [[ "${ACTION}" == "start" ]]; then
@@ -277,31 +261,16 @@ function Perform_rsync() {
       echo "No ${ACTION}-action is required for ${LOCATION} ${APP_NAME} as no containers were found with a relevant status."
     fi
     for CONTAINER_NAME in "${CONTAINER_LIST[@]}"; do
-      if [[ "${CONTAINER_TYPE}" == "kubernetes" ]]; then
-        if JOBID="$(Execute_command "${LOCATION}" "midclt call chart.release.scale ${CONTAINER_NAME} '{\"replica_count\": ${ACTION_INT}}'")" && [[ -n "${JOBID}" ]]; then
-          while [[ "$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")" != "SUCCESS" ]]; do
-            ((TIMEOUT_COUNTER++))
-            [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Waiting for ${LOCATION} ${CONTAINER_NAME} to ${ACTION} has timed out."
-            echo -n "."
-            sleep 1
-          done
-          echo " ${ACTION^} was successful."
-        else
-          echo "Failed!"
-          Background_error "ERROR: Failed to obtain a \$JOBID for ${ACTION_VERB} the ${LOCATION} ${APP_NAME^}"
-        fi
-      elif [[ "${CONTAINER_TYPE}" == "docker" ]]; then
-        if JOBID="$(Execute_command "${LOCATION}" "midclt call app.${ACTION} \"${CONTAINER_NAME}\"")" && [[ -n "${JOBID}" ]]; then
-          while [[ "$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")" != "SUCCESS" ]]; do
-            ((TIMEOUT_COUNTER++))
-            [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Waiting for ${LOCATION} ${CONTAINER_NAME} to ${ACTION} has timed out."
-            echo -n "."
-            sleep 1
-          done
-          echo " ${ACTION^} was successful."
-        else
-          Background_error "ERROR2: Failed to perform ${ACTION_VERB} the ${LOCATION} ${CONTAINER_NAME}"
-        fi
+      if JOBID="$(Execute_command "${LOCATION}" "midclt call app.${ACTION} \"${CONTAINER_NAME}\"")" && [[ -n "${JOBID}" ]]; then
+        while [[ "$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")" != "SUCCESS" ]]; do
+          ((TIMEOUT_COUNTER++))
+          [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Waiting for ${LOCATION} ${CONTAINER_NAME} to ${ACTION} has timed out."
+          echo -n "."
+          sleep 1
+        done
+        echo " ${ACTION^} was successful."
+      else
+        Background_error "ERROR: Failed to perform ${ACTION_VERB} the ${LOCATION} ${CONTAINER_NAME}"
       fi
     done
     [[ "${ACTION}" == "stop" ]] && eval "${LOCATION^^}_STOPPED_LIST=( \"${CONTAINER_LIST[@]}\" )"
