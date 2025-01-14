@@ -1,7 +1,8 @@
 #!/usr/bin/bash
 
 # TODO:
-# * unmount fails if you opened the dataset NFS in explorer
+# * Unmount fails if you opened the dataset NFS in explorer
+# * Add Immich
 
 declare TASK
 declare PERFORM_ROLLUP
@@ -15,7 +16,8 @@ declare SCRIPT_FILENAME="$(basename $0)"
 declare SCRIPT_DIR="$(dirname $0)"
 declare LOG_FILE="${SCRIPT_DIR}/../logs/${SCRIPT_FILENAME}.$(date +"%Y-%m-%d_%H-%M").log"
 declare -a BACKUP_OPTIONS=( "$@" )
-declare SSH_CONFIG_FILE="${SCRIPT_DIR}/../.ssh/config"
+declare SSH_CONFIG_FILE="/mnt/backup-pool/homedir-ds/home/root/.ssh/config"   # TODO: remove line
+#declare SSH_CONFIG_FILE="${SCRIPT_DIR}/../.ssh/config"                       # TODO: uncomment line
 declare LOCAL_SERVER_ID="$(hostname -s| sed 's/^truenas-//')"
 if [[ "${LOCAL_SERVER_ID}" == "master" ]]; then
     declare REMOTE_SERVER_ID="backup"
@@ -26,6 +28,8 @@ else
   exit 1
 fi
 declare REMOTE_CMD="ssh -F ${SSH_CONFIG_FILE} truenas-${REMOTE_SERVER_ID}"
+
+declare REMOTE_SOURCE REMOTE_TARGET LOCAL_SOURCE LOCAL_TARGET
 
 function Help() {
   echo "Help for ${SCRIPT_FILENAME}"
@@ -196,142 +200,187 @@ function Execute_command() {
 }
 
 function Perform_rsync() {
-  function Control_plex() {
-    local ACTION="$1"
-    local LOCATION="$2"
+  function Control_container() {
+    local APP_NAME="$1"
+    local ACTION="$2"
+    local LOCATION="$3"
 
     local ACTION_INT ACTION_MSG ACTION_VERB
-    local PLEX_STATUS
+    local APP_STATUS
     local CONTROL_CMD
     local JOBID_STATUS_CMD
     local JOBID
     local CONTAINER_TYPE
+    local CONTAINER_NAME
     local SERVER_ID_VAR
 
+    local -a START_CONTAINER_LIST STOP_CONTAINER_LIST
+
     local TIMEOUT_COUNTER="0"
-    local MAX_TIMEOUT=40
+    local MAX_TIMEOUT=60
 
     if [[ "${ACTION}" == "start" ]]; then
       ACTION_INT="1"
-      ACTION_MSG="Starting ${LOCATION} Plex again, as it was also active before."
+      ACTION_MSG="Starting ${LOCATION} ${APP_NAME^} again, as it was also active before."
       ACTION_VERB="starting"
     elif [[ "${ACTION}" == "stop" ]]; then
       ACTION_INT="0"
-      ACTION_MSG="${LOCATION^} Plex is active. Temporary stopping it now."
+      ACTION_MSG="${LOCATION^} ${APP_NAME^} is active. Temporary stopping it now."
       ACTION_VERB="stopping"
-    else
-      Background_error "The first option of Control_plex() must be either 'start' or 'stop'."
     fi
     
     if Execute_command "${LOCATION}" "which docker >/dev/null 2>&1"; then
       CONTAINER_TYPE="docker"
-    else
+    elif Execute_command "${LOCATION}" "which k3s >/dev/null 2>&1"; then
       CONTAINER_TYPE="kubernetes"
+    else
+      Background_error "Both k3s and docker were not found. Cannot ${ACTION} ${APP_NAME^}."
     fi
     
     SERVER_ID_VAR="${LOCATION^^}_SERVER_ID"
     if [[ "${CONTAINER_TYPE}" == "kubernetes" ]]; then
-      PLEX_STATUS="$(Execute_command ${LOCATION} "midclt call chart.release.query \"[[\\\"id\\\",\\\"=\\\",\\\"plex-${!SERVER_ID_VAR}\\\"]]\" | jq -r '.[] | .status'")"
-      CONTROL_CMD="midclt call chart.release.scale plex-${!SERVER_ID_VAR} '{\"replica_count\": ${ACTION_INT}}'"
-      JOBID_STATUS_CMD="midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",JOBID_TO_FILL]]\" | jq -r '.[0].state'"
+      STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call chart.release.query | jq -r '.[] | select(.status | test(\"ACTIVE|DEPLOYING|PAUSED|RESTARTING\")) | .id' | grep \"${APP_NAME}\"") )
+      START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call chart.release.query | jq -r '.[] | select(.status | test(\"STOPPED|FAILED|PAUSED\")) | .id' | grep \"${APP_NAME}\"") )
+      #STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call chart.release.query | jq -r '.[] | select(.status | test(\"ACTIVE|DEPLOYING|PAUSED|RESTARTING\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
+      #START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call chart.release.query | jq -r '.[] | select(.status | test(\"STOPPED|FAILED|PAUSED\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
     elif [[ "${CONTAINER_TYPE}" == "docker" ]]; then
-      PLEX_CONTAINER_NAME="$(Execute_command ${LOCATION} "docker ps -a --format '{{.Names}}' | grep \"plex-${!SERVER_ID_VAR}\"")"
-      if [[ -z "${PLEX_CONTAINER_NAME}" ]]; then
-        PLEX_STATUS="not_found"
-      elif [[ "$(echo "${PLEX_CONTAINER_NAME}" | wc -l)" -ne 1 ]]; then
-        Background_error "Multiple docker containers found with the command: docker ps -a --format '{{.Names}}' | grep plex-${!SERVER_ID_VAR}"
-      else
-        PLEX_STATUS="$(Execute_command ${LOCATION} "docker inspect -f '{{.State.Status}}' ${PLEX_CONTAINER_NAME}")"
-        CONTROL_CMD="docker ${ACTION} ${PLEX_CONTAINER_NAME}"
-        STOPSTATUS_CMD="docker wait ${PLEX_CONTAINER_NAME}"
-      fi
+      STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"RUNNING|DEPLOYING\")) | .id' | grep \"${APP_NAME}\"") )
+      START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"STOPPED|CRASHED\")) | .id' | grep \"${APP_NAME}\"") )
+      #STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"RUNNING|DEPLOYING\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
+      #START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"STOPPED|CRASHED\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
     fi
 
-    if { [[ "${PLEX_STATUS}" == "STOPPED" || "${PLEX_STATUS}" == "FAILED" || "${PLEX_STATUS}" == "PAUSED" || \
-            "${PLEX_STATUS}" == "created" || "${PLEX_STATUS}" == "exited" || "${PLEX_STATUS}" == "paused" ]] && \
-         [[ "${ACTION}" == "start" ]] } || \
-       { [[ "${PLEX_STATUS}" == "ACTIVE" || "${PLEX_STATUS}" == "DEPLOYING" || "${PLEX_STATUS}" == "PAUSED" || "${PLEX_STATUS}" == "RESTARTING" || \
-           "${PLEX_STATUS}" == "running" || "${PLEX_STATUS}" == "paused" || "${PLEX_STATUS}" == "restarting" ]] && \
-         [[ "${ACTION}" == "stop" ]] }; then
+    # Compare the array START_CONTAINER_LIST with the array ${LOCATION^^}_STOPPED_LIST for the 'start' action 
+    if [[ "${ACTION}" == "start" ]]; then
+      eval "local -a STOPPED_LIST=( \"\${${LOCATION^^}_STOPPED_LIST[@]}\" )"
+      local -a NEW_START_CONTAINER_LIST=()
+      for CONTAINER_NAME in "${START_CONTAINER_LIST[@]}"; do
+        if [[ " ${STOPPED_LIST[@]} " =~ " ${CONTAINER_NAME} " ]]; then
+          NEW_START_CONTAINER_LIST+=( "$CONTAINER_NAME" )
+        fi
+      done
+      
+      # Check for missing containers in the start list 
+      for CONTAINER_NAME in "${STOPPED_LIST[@]}"; do
+        if [[ ! " ${START_CONTAINER_LIST[@]} " =~ " ${CONTAINER_NAME} " ]]; then
+          echo "WARNING: Container ${CONTAINER_NAME} cannot be started because of its status."
+        fi
+      done
+
+      START_CONTAINER_LIST=( "${NEW_START_CONTAINER_LIST[@]}" )
+    fi
+
+    eval "local -a CONTAINER_LIST=( \"\${${ACTION^^}_CONTAINER_LIST[@]}\" )"
+    if [[ -n "${CONTAINER_LIST[@]}" ]]; then
       echo -n "${ACTION_MSG}"
+    else
+      echo "No ${ACTION}-action is required for ${LOCATION} ${APP_NAME} as no containers were found with a relevant status."
+    fi
+    for CONTAINER_NAME in "${CONTAINER_LIST[@]}"; do
       if [[ "${CONTAINER_TYPE}" == "kubernetes" ]]; then
-        if JOBID="$(Execute_command "${LOCATION}" "${CONTROL_CMD}")" && [[ -n "${JOBID}" ]]; then
-          while [[ "$(Execute_command "${LOCATION}" "${JOBID_STATUS_CMD/JOBID_TO_FILL/${JOBID}}")" != "SUCCESS" ]]; do
+        if JOBID="$(Execute_command "${LOCATION}" "midclt call chart.release.scale ${CONTAINER_NAME} '{\"replica_count\": ${ACTION_INT}}'")" && [[ -n "${JOBID}" ]]; then
+          while [[ "$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")" != "SUCCESS" ]]; do
             ((TIMEOUT_COUNTER++))
-            [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Waiting for ${LOCATION} Plex to ${ACTION} has timed out."
+            [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Waiting for ${LOCATION} ${CONTAINER_NAME} to ${ACTION} has timed out."
             echo -n "."
             sleep 1
           done
           echo " ${ACTION^} was successful."
-          [[ "${ACTION}" == "stop" ]] && eval "${LOCATION^^}_PLEX_STOPPED='true'"
         else
           echo "Failed!"
-          Background_error "ERROR: Failed to obtain a \$JOBID for ${ACTION_VERB} the ${LOCATION} Plex"
+          Background_error "ERROR: Failed to obtain a \$JOBID for ${ACTION_VERB} the ${LOCATION} ${APP_NAME^}"
         fi
       elif [[ "${CONTAINER_TYPE}" == "docker" ]]; then
-        if Execute_command "${LOCATION}" "${CONTROL_CMD}" >/dev/null; then
-          if [[ "${ACTION}" == "stop" && "$(Execute_command "${LOCATION}" ${STOPSTATUS_CMD})" -ne 0 ]]; then
-            echo "Failed!"
-            Background_error "ERROR: Failed to perform ${ACTION_VERB} the ${LOCATION} Plex"
-          else
-            echo " ${ACTION^} was successful."
-            [[ "${ACTION}" == "stop" ]] && eval "${LOCATION^^}_PLEX_STOPPED='true'"
-          fi
+        if JOBID="$(Execute_command "${LOCATION}" "midclt call app.${ACTION} \"${CONTAINER_NAME}\"")" && [[ -n "${JOBID}" ]]; then
+          while [[ "$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")" != "SUCCESS" ]]; do
+            ((TIMEOUT_COUNTER++))
+            [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Waiting for ${LOCATION} ${CONTAINER_NAME} to ${ACTION} has timed out."
+            echo -n "."
+            sleep 1
+          done
+          echo " ${ACTION^} was successful."
         else
-          echo "Failed!"
-          Background_error "ERROR: Failed to perform ${ACTION_VERB} the ${LOCATION} Plex"
+          Background_error "ERROR2: Failed to perform ${ACTION_VERB} the ${LOCATION} ${CONTAINER_NAME}"
         fi
       fi
-    else
-      [[ "${ACTION}" == "stop" ]] && echo "${LOCATION^} Plex was not running (status ${PLEX_STATUS}), so no need to temporary stop it..."
-      [[ "${ACTION}" == "start" ]] && echo "${LOCATION^} Plex cannot be started with status ${PLEX_STATUS}..."
-    fi
+    done
+    [[ "${ACTION}" == "stop" ]] && eval "${LOCATION^^}_STOPPED_LIST=( \"${CONTAINER_LIST[@]}\" )"
   }
 
-  local -a FOLDERS_TO_RSYNC=( "Media" "Metadata" "Plug-ins" "Plug-in Support" )
-  local FOLDER_TO_RSYNC
-  local SOURCE_PATH TARGET_PATH
-  local PLEX_PATH="/mnt/REPLACEME-pool/encrypted-ds/app-ds/plex-ds/Library/Application Support/Plex Media Server"
-  local REMOTE_PLEX_STOPPED LOCAL_PLEX_STOPPED
+  local -a APPS_LIST=( "plex" "immich" )
+  local -a LOCATIONS_LIST=( "local" "remote" )
+  local -a PLEX_FOLDERS_TO_RSYNC_LIST=( "Media" "Metadata" "Plug-ins" "Plug-in Support" )
+  local -a IMMICH_FOLDERS_TO_RSYNC_LIST=( "library" "profile" "thumbs" "uploads" "video" )
+  local PLEX_PATH="/mnt/LOCATION_TO_INSERT-pool/encrypted-ds/app-ds/plex-ds/Library/Application Support/Plex Media Server"
+  local IMMICH_PATH="/mnt/LOCATION_TO_INSERT-pool/encrypted-ds/app-ds/immich-ds"
 
-  if [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "master" ]] || \
-     [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "backup" ]]; then
-      SOURCE_PATH="truenas-${REMOTE_SERVER_ID}:${PLEX_PATH/REPLACEME/${REMOTE_SOURCE}}"
-      TARGET_PATH="${PLEX_PATH/REPLACEME/${LOCAL_TARGET}}"
-  elif [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "backup" ]] || \
-       [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "master" ]]; then
-      SOURCE_PATH="${PLEX_PATH/REPLACEME/${LOCAL_SOURCE}}"
-      TARGET_PATH="truenas-${REMOTE_SERVER_ID}:${PLEX_PATH/REPLACEME/${REMOTE_TARGET}}"
-  fi
+  local -a FOLDERS_TO_RSYNC_LIST 
+  local FOLDER_TO_RSYNC
+  local INDIRECT_APP_PATH
+  local SOURCE_PATH TARGET_PATH
+  local -a REMOTE_STOPPED_LIST LOCAL_STOPPED_LIST
 
   echo "########################"
   echo "### Performing rsync ###"
   echo "########################"
   echo
 
-  ! Execute_command local "test -d \"${PLEX_PATH/REPLACEME/${LOCAL_SOURCE}${LOCAL_TARGET}}\""    && Background_error "ERROR: '${PLEX_PATH/REPLACEME/${LOCAL_SOURCE}${LOCAL_TARGET}}' does not exist. Is the dataset mounted and unlocked?"   
-  ! Execute_command remote "test -d \"${PLEX_PATH/REPLACEME/${REMOTE_SOURCE}${REMOTE_TARGET}}\"" && Background_error "ERROR: 'truenas-${REMOTE_SERVER_ID}:${PLEX_PATH/REPLACEME/${REMOTE_SOURCE}${REMOTE_TARGET}}' does not exist. Is the dataset mounted and unlocked?"
+  for APP_NAME in "${APPS_LIST[@]}"; do
+    REMOTE_STOPPED_LIST=()
+    LOCAL_STOPPED_LIST=()
 
-  Control_plex stop remote
-  Control_plex stop local
-  echo
+    INDIRECT_APP_PATH="${APP_NAME^^}_PATH"
+    APP_PATH="${!INDIRECT_APP_PATH}"
 
-  for FOLDER_TO_RSYNC in "${FOLDERS_TO_RSYNC[@]}"; do
-    echo "rsync -e \"ssh -F ${SSH_CONFIG_FILE}\" --delete -aHX \"${SOURCE_PATH}/${FOLDER_TO_RSYNC}/\" \"${TARGET_PATH}/${FOLDER_TO_RSYNC}/\""
-    if [[ -z "${TEST_MODE}" ]]; then
-      rsync -e "ssh -F ${SSH_CONFIG_FILE}" --delete -aHX "${SOURCE_PATH}/${FOLDER_TO_RSYNC}/" "${TARGET_PATH}/${FOLDER_TO_RSYNC}/"
+    # Check if local and remote application datasets are available
+    ! Execute_command local "test -d \"${APP_PATH/LOCATION_TO_INSERT/${LOCAL_SOURCE}${LOCAL_TARGET}}\""    && Background_error "ERROR: '${APP_PATH/LOCATION_TO_INSERT/${LOCAL_SOURCE}${LOCAL_TARGET}}' does not exist. Is the dataset mounted and unlocked?"   
+    ! Execute_command remote "test -d \"${APP_PATH/LOCATION_TO_INSERT/${REMOTE_SOURCE}${REMOTE_TARGET}}\"" && Background_error "ERROR: 'truenas-${REMOTE_SERVER_ID}:${APP_PATH/LOCATION_TO_INSERT/${REMOTE_SOURCE}${REMOTE_TARGET}}' does not exist. Is the dataset mounted and unlocked?"
+
+    # Stop the application locally and remotely
+    for LOCATION in "${LOCATIONS_LIST[@]}"; do
+      Control_container ${APP_NAME} stop ${LOCATION}
+    done
+    echo
+    
+    # Prepare the rsyncs
+    if [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "master" ]] || \
+      [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "backup" ]]; then
+        SOURCE_PATH="truenas-${REMOTE_SERVER_ID}:${APP_PATH/LOCATION_TO_INSERT/${REMOTE_SOURCE}}"
+        TARGET_PATH="${APP_PATH/LOCATION_TO_INSERT/${LOCAL_TARGET}}"
+    elif [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "backup" ]] || \
+        [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "master" ]]; then
+        SOURCE_PATH="${APP_PATH/LOCATION_TO_INSERT/${LOCAL_SOURCE}}"
+        TARGET_PATH="truenas-${REMOTE_SERVER_ID}:${APP_PATH/LOCATION_TO_INSERT/${REMOTE_TARGET}}"
+    fi
+
+    eval "local -a FOLDERS_TO_RSYNC_LIST=( \"\${${APP_NAME^^}_FOLDERS_TO_RSYNC_LIST[@]}\" )"
+    for FOLDER_TO_RSYNC in "${FOLDERS_TO_RSYNC_LIST[@]}"; do
+      # Check if the source and target directories exist
+      for FULL_PATH in "${SOURCE_PATH}" "${TARGET_PATH}"; do
+        if [[ "${FULL_PATH}" == *:* ]]; then
+          Execute_command remote "test -d \"${FULL_PATH#*:}/${FOLDER_TO_RSYNC}\"" || Background_error "ERROR: '${FULL_PATH}/${FOLDER_TO_RSYNC}' does not exist. Is the dataset mounted and unlocked?"
+        else
+          Execute_command local "test -d \"${FULL_PATH#*:}/${FOLDER_TO_RSYNC}\"" || Background_error "ERROR: '${FULL_PATH}/${FOLDER_TO_RSYNC}' does not exist. Is the dataset mounted and unlocked?"
+        fi
+      done
+    
+      # Perform the rsyncs
+      echo "rsync ${TEST_MODE:+--dry-run} -e \"ssh -F ${SSH_CONFIG_FILE}\" --delete -aHX \"${SOURCE_PATH}/${FOLDER_TO_RSYNC}/\" \"${TARGET_PATH}/${FOLDER_TO_RSYNC}/\""
+      rsync ${TEST_MODE:+--dry-run} -e "ssh -F ${SSH_CONFIG_FILE}" --delete -aHX "${SOURCE_PATH}/${FOLDER_TO_RSYNC}/" "${TARGET_PATH}/${FOLDER_TO_RSYNC}/"
       if [[ "$?" == "0" ]]; then
         echo "Rsync of '${FOLDER_TO_RSYNC}' completed successfully"
       else
         Background_error "ERROR: Rsync of '${FOLDER_TO_RSYNC}' failed"
       fi
-    fi
+      echo
+    done
+
+    # Start the application locally and remotely if they were stopped
+    for LOCATION in "${LOCATIONS_LIST[@]}"; do
+      Control_container ${APP_NAME} start ${LOCATION}
+    done
     echo
   done
-  
-  [[ "${REMOTE_PLEX_STOPPED}" == "true" ]] && Control_plex start remote
-  [[ "${LOCAL_PLEX_STOPPED}" == "true" ]]  && Control_plex start local
-  echo
 
   echo "### Performing rsync completed ###"
   echo
@@ -490,4 +539,3 @@ else
   [[ ! -d "$(dirname "${LOG_FILE}")" ]] && mkdir "$(dirname "${LOG_FILE}")"
   nohup $0 --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"  >>"${LOG_FILE}" 2>&1 & { sleep 1; tail -f "${LOG_FILE}"; }
 fi
-
