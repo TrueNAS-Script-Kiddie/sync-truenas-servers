@@ -416,6 +416,7 @@ function Perform_rsync() {
     Control_docker_containers "${LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
 
     Wait_for_pg_ready "${LOCATION}" "${CONTAINERS_TO_START[0]}"
+    sleep 2
 
     # Restore Postgress DB from backup
     echo "Restoring of the Immich DB from /mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgBackup/${EXEC_DATE}_immich_backup.dump.sql.gz"
@@ -555,6 +556,14 @@ function Perform_zfs_rep() {
     local ZFS_AUTOBACKUP_FOLDER="${SCRIPT_DIR}/zfs_autobackup"
     local EXEC_MODE
 
+    EXEC_MODE="$([[ -n "${LOCAL_TARGET}" ]] && echo local_verbose || echo remote_verbose)"
+    [[ -n "${TEST_MODE}" ]] && EXEC_MODE+="_test"
+
+    for IMPACTED_DATASET in ${IMPACTED_DATASETS}; do
+      Execute_command "${EXEC_MODE}" "zfs umount ${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}"
+    done
+    echo
+
     cd "${ZFS_AUTOBACKUP_FOLDER}"
     echo "${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}"
     ${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}
@@ -566,11 +575,7 @@ function Perform_zfs_rep() {
     echo
     cd - >/dev/null
 
-    EXEC_MODE="$([[ -n "${LOCAL_TARGET}" ]] && echo local_verbose || echo remote_verbose)"
-    [[ -n "${TEST_MODE}" ]] && EXEC_MODE+="_test"
-
     for IMPACTED_DATASET in ${IMPACTED_DATASETS}; do
-      Execute_command "${EXEC_MODE}" "zfs umount ${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}"
       Execute_command "${EXEC_MODE}" "zfs mount ${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}"
     done
   }
