@@ -4,6 +4,10 @@
 # * Unmount fails if you opened the dataset NFS in explorer
 # * Add Immich
 
+# Variables to set in variables.bash
+# ${EMAIL_TO}
+# ${SSH_CONFIG_FILE}
+
 declare TASK
 declare PERFORM_ROLLUP
 declare PERFORM_RSYNC
@@ -14,11 +18,11 @@ declare TEST_MODE
 declare SCRIPT_FILENAME="$(basename $0)"
 declare SCRIPT_DIR="$(dirname $0)"
 declare LOG_FILE="${SCRIPT_DIR}/../logs/${SCRIPT_FILENAME}.$(date +"%Y-%m-%d_%H-%M").log"
+declare DB_RESTORE_LOG="${SCRIPT_DIR}/../logs/${SCRIPT_FILENAME}_DB_Restore.$(date +"%Y-%m-%d_%H-%M").log"
 declare -a BACKUP_OPTIONS=( "$@" )
-declare SSH_CONFIG_FILE="${SCRIPT_DIR}/../.ssh/config"
-[[ ! -f "${SSH_CONFIG_FILE}" ]] && SSH_CONFIG_FILE="/mnt/backup-pool/homedir-ds/home/root/.ssh/config"
+declare EXEC_DATE="$(date +%Y-%m-%d)"
 
-declare LOCAL_SERVER_ID="$(hostname -s| sed 's/^truenas-//')"
+declare LOCAL_SERVER_ID="$(hostname -s | sed 's/^truenas-//')"
 if [[ "${LOCAL_SERVER_ID}" == "master" ]]; then
     declare REMOTE_SERVER_ID="backup"
 elif [[ "${LOCAL_SERVER_ID}" == "backup" ]]; then
@@ -27,15 +31,18 @@ else
   echo "ERROR: The hostname ($(hostname -s)) of the server where you are running this, is unknown. You must run this either on truenas-master or truenas-backup."
   exit 1
 fi
-declare REMOTE_CMD="ssh -F ${SSH_CONFIG_FILE} truenas-${REMOTE_SERVER_ID}"
-
 declare REMOTE_SOURCE REMOTE_TARGET LOCAL_SOURCE LOCAL_TARGET
+declare -a APPS_LIST=( "plex" "immich" )
+
+source "${SCRIPT_DIR}/variables.bash"
+declare REMOTE_CMD="ssh -F ${SSH_CONFIG_FILE} truenas-${REMOTE_SERVER_ID}"
 
 function Help() {
   echo "Help for ${SCRIPT_FILENAME}"
   echo
   echo -e "${SCRIPT_FILENAME} [-h] [--help]\t\t\t\tDisplays this help message."
-  echo -e "${SCRIPT_FILENAME} [--test] --task=<task> --subtask=<subtask>\tPerforms the requested sync."
+  echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>]"
+  echo -e "\t\t\t\t\t\t\t\tPerforms the requested sync."
   echo
   echo -e "Optional option = --test"
   echo -e "\tThis option forces the script not change anything. It does stop/start containers."
@@ -54,6 +61,10 @@ function Help() {
   echo -e "zfs_replication_with_latest_snapshot\t\t\t\tPerform ZFS replication with latest snapshot."
   echo -e "snapshot_rollup\t\t\t\t\t\t\tPerform snapshot rollup (doesn't sync any data)."
   echo
+  echo "Allowed apps:"
+  echo -e "immich\t\t\t\t\t\t\t\tLimit the rsync subtask to only copy Immich."
+  echo -e "plex\t\t\t\t\t\t\t\tLimit the rsync subtask to only copy Plex."
+  echo
 
   exit 0
 }
@@ -69,6 +80,13 @@ function Process_command_line_options() {
   function l_Subtask_precheck() {
     if [[ -n "${PERFORM_ROLLUP}" || -n "${PERFORM_RSYNC}" || -n "${PERFORM_ZFS_REP_ALL}" || -n "${PERFORM_ZFS_REP_LATEST}" ]]; then
       echo "ERROR: You may only choose 1 subtask!"
+      exit 1
+    fi
+  }
+
+  function l_App_precheck() {
+    if [[ "${#APPS_LIST[@]}" -ne "2"  ]]; then
+      echo "ERROR: You may only choose 1 app when using --app!"
       exit 1
     fi
   }
@@ -131,6 +149,14 @@ function Process_command_line_options() {
       --subtask=snapshot_rollup)
         l_Subtask_precheck
         PERFORM_ROLLUP="true"
+        ;;
+      --app=plex)
+        l_App_precheck
+        APPS_LIST=( "plex" )
+        ;;
+      --app=immich)
+        l_App_precheck
+        APPS_LIST=( "immich" )
         ;;
       --running_in_background)
         RUNNING_IN_BACKGROUND="true"
@@ -200,94 +226,232 @@ function Execute_command() {
 }
 
 function Perform_rsync() {
-  function Control_container() {
+  function Control_app_with_checks() {
     local APP_NAME="$1"
     local ACTION="$2"
     local LOCATION="$3"
 
-    local ACTION_INT ACTION_MSG ACTION_VERB
-    local APP_STATUS
-    local CONTROL_CMD
-    local JOBID_STATUS_CMD
+    local PERFORM_ACTION
+    local APP_STATE
+
+    eval "local FULL_APP_NAME=\"${APP_NAME}-\${${LOCATION^^}_SERVER_ID}\""
+    eval "local -a STOPPED_LIST=( \"\${${LOCATION^^}_STOPPED_LIST[@]}\" )"
+
+    APP_STATE="$(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.name==\"${FULL_APP_NAME}\") | .state'")"
+
+    if [[ "${ACTION}" == "start" && ! "${APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
+      echo "WARNING: ${FULL_APP_NAME} cannot be started because its state is not 'STOPPED' or 'CRASHED'. It is ${APP_STATE}."
+    elif [[ "${ACTION}" == "start" && " ${STOPPED_LIST[@]} " =~ " ${APP_NAME} " ]]; then
+      # Only if the app was previously stopped, it should be started again
+      PERFORM_ACTION="true"
+      echo -n "Starting ${LOCATION} ${FULL_APP_NAME} again, as it was also active before."
+    elif [[ "${ACTION}" == "stop" && ! "${APP_STATE}" =~ ^(RUNNING|DEPLOYING|CRASHED)$ ]]; then
+      echo "WARNING: ${FULL_APP_NAME} cannot be stopped because its state is not 'RUNNING', 'DEPLOYING' or 'CRASHED'. It is ${APP_STATE}."
+    elif [[ "${ACTION}" == "stop" ]]; then
+      PERFORM_ACTION="true"
+      echo -n "Stopping ${LOCATION} ${FULL_APP_NAME}"
+    fi
+
+    if [[ "${PERFORM_ACTION}" == "true" ]]; then
+      Control_app "${FULL_APP_NAME}" "${ACTION}" "${LOCATION}"
+      [[ "${ACTION}" == "stop" ]] && eval "${LOCATION^^}_STOPPED_LIST+=( \"${APP_NAME}\" )"
+    fi
+  }
+
+  function Control_app() {
+    local FULL_APP_NAME="$1"
+    local ACTION="$2"
+    local LOCATION="$3"
+
     local JOBID
-    local CONTAINER_NAME
-    local SERVER_ID_VAR
-
-    local -a START_CONTAINER_LIST STOP_CONTAINER_LIST
-
     local TIMEOUT_COUNTER="0"
     local MAX_TIMEOUT=60
 
-    if [[ "${ACTION}" == "start" ]]; then
-      ACTION_INT="1"
-      ACTION_MSG="Starting ${LOCATION} ${APP_NAME^} again, as it was also active before."
-      ACTION_VERB="starting"
-    elif [[ "${ACTION}" == "stop" ]]; then
-      ACTION_INT="0"
-      ACTION_MSG="${LOCATION^} ${APP_NAME^} is active. Temporary stopping it now."
-      ACTION_VERB="stopping"
-    fi
-    
-    SERVER_ID_VAR="${LOCATION^^}_SERVER_ID"
-    STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"RUNNING|DEPLOYING\")) | .id' | grep \"${APP_NAME}\"") )
-    START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"STOPPED|CRASHED\")) | .id' | grep \"${APP_NAME}\"") )
-    #STOP_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"RUNNING|DEPLOYING\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
-    #START_CONTAINER_LIST=( $(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.state | test(\"STOPPED|CRASHED\")) | .id' | grep \"${APP_NAME}-${!SERVER_ID_VAR}\"") )
-
-    # Compare the array START_CONTAINER_LIST with the array ${LOCATION^^}_STOPPED_LIST for the 'start' action 
-    if [[ "${ACTION}" == "start" ]]; then
-      eval "local -a STOPPED_LIST=( \"\${${LOCATION^^}_STOPPED_LIST[@]}\" )"
-      local -a NEW_START_CONTAINER_LIST=()
-      for CONTAINER_NAME in "${START_CONTAINER_LIST[@]}"; do
-        if [[ " ${STOPPED_LIST[@]} " =~ " ${CONTAINER_NAME} " ]]; then
-          NEW_START_CONTAINER_LIST+=( "$CONTAINER_NAME" )
-        fi
+    # TODO remove?: echo -n "Stopping the Immich application."
+    if JOBID="$(Execute_command "${LOCATION}" "midclt call app.${ACTION} \"${FULL_APP_NAME}\"")" && [[ -n "${JOBID}" ]]; then
+      while [[ "$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")" != "SUCCESS" ]]; do
+        ((TIMEOUT_COUNTER++))
+        [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Waiting for ${LOCATION} ${FULL_APP_NAME} to ${ACTION} has timed out."
+        echo -n "."
+        sleep 1
       done
-      
-      # Check for missing containers in the start list 
-      for CONTAINER_NAME in "${STOPPED_LIST[@]}"; do
-        if [[ ! " ${START_CONTAINER_LIST[@]} " =~ " ${CONTAINER_NAME} " ]]; then
-          echo "WARNING: Container ${CONTAINER_NAME} cannot be started because of its status."
-        fi
-      done
-
-      START_CONTAINER_LIST=( "${NEW_START_CONTAINER_LIST[@]}" )
-    fi
-
-    eval "local -a CONTAINER_LIST=( \"\${${ACTION^^}_CONTAINER_LIST[@]}\" )"
-    if [[ -n "${CONTAINER_LIST[@]}" ]]; then
-      echo -n "${ACTION_MSG}"
+      echo " ${ACTION^} was successful."
     else
-      echo "No ${ACTION}-action is required for ${LOCATION} ${APP_NAME} as no containers were found with a relevant status."
+      Background_error "ERROR: Failed to ${ACTION} the ${LOCATION} ${FULL_APP_NAME}"
     fi
-    for CONTAINER_NAME in "${CONTAINER_LIST[@]}"; do
-      if JOBID="$(Execute_command "${LOCATION}" "midclt call app.${ACTION} \"${CONTAINER_NAME}\"")" && [[ -n "${JOBID}" ]]; then
-        while [[ "$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")" != "SUCCESS" ]]; do
-          ((TIMEOUT_COUNTER++))
-          [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Waiting for ${LOCATION} ${CONTAINER_NAME} to ${ACTION} has timed out."
-          echo -n "."
-          sleep 1
-        done
-        echo " ${ACTION^} was successful."
-      else
-        Background_error "ERROR: Failed to perform ${ACTION_VERB} the ${LOCATION} ${CONTAINER_NAME}"
-      fi
-    done
-    [[ "${ACTION}" == "stop" ]] && eval "${LOCATION^^}_STOPPED_LIST=( \"${CONTAINER_LIST[@]}\" )"
   }
 
-  local -a APPS_LIST=( "plex" "immich" )
+  # Function to wait for container state
+  function Wait_for_docker_state() {
+    local LOCATION="$1"
+    local CONTAINER_NAME="$2"
+    local DESIRED_STATE="$3"
+    local START_TIME="$(date +%s)"
+    local TIMEOUT=60 # Timeout in seconds
+
+    while true; do
+      CURRENT_STATE=$(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}} {{.State}}' | grep \"${CONTAINER_NAME}\" | awk '{print \$2}'")
+      [[ "$CURRENT_STATE" == "$DESIRED_STATE" ]] && break
+      CURRENT_TIME="$(date +%s)"
+      ELAPSED_TIME="$((CURRENT_TIME - START_TIME))"
+      [[ "${ELAPSED_TIME}" -ge "${TIMEOUT}" ]] && Background_error "ERROR: Failed to put ${CONTAINER_NAME} in the ${DESIRED_STATE}. Current state: ${CURRENT_STATE}."
+      sleep 1
+    done
+  }
+
+  function Control_docker_containers() {
+    local LOCATION="$1"
+    local ACTION="$2"
+    shift 2
+    local CONTAINERS=("$@")
+    local CONTAINER
+    local DESIRED_STATE CURRENT_STATE
+
+    if [[ "${ACTION}" == "stop" ]]; then
+      DESIRED_STATE="exited"
+    elif [[ "${ACTION}" == "start" ]]; then
+      DESIRED_STATE="running"
+    else
+      echo "Invalid action: ${ACTION}. Use 'stop' or 'start'."
+      return 1
+    fi
+
+    for CONTAINER in "${CONTAINERS[@]}"; do
+      CURRENT_STATE=$(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}} {{.State}}' | grep \"${CONTAINER}\" | awk '{print \$2}'")
+      if [[ "${CURRENT_STATE}" != "${DESIRED_STATE}" ]]; then
+        echo "Container ${CONTAINER}: Changing state from ${CURRENT_STATE} to ${DESIRED_STATE}"
+        Execute_command "${LOCATION}" "docker ${ACTION} \"${CONTAINER}\" >/dev/null"
+        Wait_for_docker_state "${LOCATION}" "${CONTAINER}" "${DESIRED_STATE}"
+      else
+        echo "Container ${CONTAINER}: Is already in ${DESIRED_STATE} state."
+      fi
+    done
+  }
+
+  function Backup_immich_DB() {
+    local LOCATION="$1"
+    local SERVER_ID="$2"
+
+    echo "### Making a backup of the Immich Postgress DB ###"
+    echo
+
+    # Dynamically find container names
+    local CONTAINERS_TO_STOP=( $(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SERVER_ID}-(server|machine-learning|redis|permissions)-[0-9]+'") )
+    local CONTAINERS_TO_START=( $(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SERVER_ID}-pgvecto-[0-9]+'") )
+
+    # Make sure Immich is running
+    if [[ "$(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.name==\"immich-${SERVER_ID}\") | .state'")" != "RUNNING" ]]; then
+      Background_error "ERROR: To backup the Immich DB, it must be in a running state."
+    else
+      echo "Immich app is running, proceeding..."
+    fi
+
+    # Stop the containers
+    Control_docker_containers "${LOCATION}" "stop" "${CONTAINERS_TO_STOP[@]}"
+
+    # Start the required container
+    Control_docker_containers "${LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
+
+    # Backup the Postgres DB
+    echo "Making a backup of the Immich DB to /mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgData/${EXEC_DATE}_immich_backup.dump.sql.gz and moving it from pgData to pgBackup"
+    echo "Executing on TrueNAS-${SERVER_ID^}: docker exec -i "${CONTAINERS_TO_START[0]}" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/data/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
+    echo "Executing on TrueNAS-${SERVER_ID^}: mv \"/mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgData/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgBackup/${EXEC_DATE}_immich_backup.dump.sql.gz\""
+    if [[ -z "${TEST_MODE}" ]]; then
+      Execute_command "${LOCATION}" "docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/data/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
+      [[ "$?" != "0" ]] && Background_error "ERROR: DB backup failed."
+      Execute_command "${LOCATION}" "mv \"/mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgData/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgBackup/${EXEC_DATE}_immich_backup.dump.sql.gz\""
+      [[ "$?" != "0" ]] && Background_error "ERROR: DB move failed."
+    fi
+    echo
+    echo "### Making a backup of the Immich Postgress DB has completed successfully ###"
+    echo
+  }
+
+  function Restore_immich_DB() {
+    function Wait_for_pg_ready() {
+      local LOCATION="$1"
+      local CONTAINER_NAME="$2"
+      local START_TIME="$(date +%s)"
+      local TIMEOUT=60 # Timeout in seconds
+
+      echo -n "Waiting for PostgreSQL in container ${CONTAINER_NAME} to be started completely"
+      while true; do
+        PG_READY_OUTPUT=$(Execute_command "${LOCATION}" "docker exec -i \"${CONTAINER_NAME}\" bash -c 'pg_isready'")
+        if [[ "$PG_READY_OUTPUT" == *"accepting connections"* ]]; then
+          echo " Start complete."
+          break
+        fi
+        echo -n "."
+        CURRENT_TIME="$(date +%s)"
+        ELAPSED_TIME="$((CURRENT_TIME - START_TIME))"
+        if [[ "${ELAPSED_TIME}" -ge "${TIMEOUT}" ]]; then
+          echo " Timeout. Current state is ${PG_READY_OUTPUT}."
+          Background_error "ERROR: Timeout waiting for PostgreSQL in container ${CONTAINER_NAME} to be ready. Current status: ${PG_READY_OUTPUT}."
+          break
+        fi
+        sleep 1
+      done
+    }
+
+    local LOCATION="$1"
+    local SERVER_ID="$2"
+
+    echo "### Restoring the Immich Postgress DB from backup ###"
+    echo
+
+    # Dynamically find container names
+    local CONTAINERS_TO_STOP=($(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SERVER_ID}-(server|machine-learning|redis|permissions|pgvecto)-[0-9]+'"))
+    local CONTAINERS_TO_START=( $(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SERVER_ID}-pgvecto-[0-9]+'") )
+
+    # Stop the containers
+    Control_docker_containers "${LOCATION}" "stop" "${CONTAINERS_TO_STOP[@]}"
+
+    # Remove existing Postgress DB
+    echo "Removing the existing Immich DB before restoring the backup to it."
+    echo "Executing on TrueNAS-${SERVER_ID^}: rm -rf \"/mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgData/\"*"
+    [[ -z "${TEST_MODE}" ]] && \
+      Execute_command "${LOCATION}" "rm -rf \"/mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgData/\"*"
+
+    # Start Postgress DB
+    Control_docker_containers "${LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
+
+    Wait_for_pg_ready "${LOCATION}" "${CONTAINERS_TO_START[0]}"
+
+    # Restore Postgress DB from backup
+    echo "Restoring of the Immich DB from /mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgBackup/${EXEC_DATE}_immich_backup.dump.sql.gz"
+    echo "Executing on TrueNAS-${SERVER_ID^}: gunzip < \"/mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgBackup/${EXEC_DATE}_immich_backup.dump.sql.gz\" | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich"
+    if [[ -z "${TEST_MODE}" ]]; then
+      Execute_command "${LOCATION}" "gunzip < /mnt/${SERVER_ID}-pool/encrypted-ds/app-ds/immich-ds/pgBackup/${EXEC_DATE}_immich_backup.dump.sql.gz | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i ${CONTAINERS_TO_START[0]} psql --username=immich --host=localhost" >"${DB_RESTORE_LOG}" 2>&1
+      [[ "$?" != "0" ]] && Background_error "ERROR: DB restore failed. Check ${DB_RESTORE_LOG} for more details."
+    fi
+
+    # Stop Immich completely
+    echo -n "Stopping the Immich application completely."
+    Control_app "immich-${SERVER_ID}" "stop" "${LOCATION}"
+
+    # Start Immich completely
+    echo -n "Starting the Immich application."
+    Control_app "immich-${SERVER_ID}" "start" "${LOCATION}"
+
+    echo
+    echo "### Restoring the Immich Postgress DB from backup has completed successfully ###"
+    echo
+  }
+
   local -a LOCATIONS_LIST=( "local" "remote" )
   local -a PLEX_FOLDERS_TO_RSYNC_LIST=( "Media" "Metadata" "Plug-ins" "Plug-in Support" )
-  local -a IMMICH_FOLDERS_TO_RSYNC_LIST=( "library" "profile" "thumbs" "uploads" "video" )
+  local -a IMMICH_FOLDERS_TO_RSYNC_LIST=( "library" "profile" "thumbs" "uploads" "video" "pgBackup" )
   local PLEX_PATH="/mnt/LOCATION_TO_INSERT-pool/encrypted-ds/app-ds/plex-ds/Library/Application Support/Plex Media Server"
   local IMMICH_PATH="/mnt/LOCATION_TO_INSERT-pool/encrypted-ds/app-ds/immich-ds"
 
+  local APP_NAME
+  local -a REMOTE_STOPPED_LIST LOCAL_STOPPED_LIST
+  local APP_PATH_VAR APP_PATH
+  local LOCATION
+  local SOURCE_PATH TARGET_PATH
   local -a FOLDERS_TO_RSYNC_LIST 
   local FOLDER_TO_RSYNC
-  local INDIRECT_APP_PATH
-  local SOURCE_PATH TARGET_PATH
-  local -a REMOTE_STOPPED_LIST LOCAL_STOPPED_LIST
+  local FULL_PATH
 
   echo "########################"
   echo "### Performing rsync ###"
@@ -298,16 +462,21 @@ function Perform_rsync() {
     REMOTE_STOPPED_LIST=()
     LOCAL_STOPPED_LIST=()
 
-    INDIRECT_APP_PATH="${APP_NAME^^}_PATH"
-    APP_PATH="${!INDIRECT_APP_PATH}"
+    APP_PATH_VAR="${APP_NAME^^}_PATH"
+    APP_PATH="${!APP_PATH_VAR}"
 
     # Check if local and remote application datasets are available
-    ! Execute_command local "test -d \"${APP_PATH/LOCATION_TO_INSERT/${LOCAL_SOURCE}${LOCAL_TARGET}}\""    && Background_error "ERROR: '${APP_PATH/LOCATION_TO_INSERT/${LOCAL_SOURCE}${LOCAL_TARGET}}' does not exist. Is the dataset mounted and unlocked?"   
-    ! Execute_command remote "test -d \"${APP_PATH/LOCATION_TO_INSERT/${REMOTE_SOURCE}${REMOTE_TARGET}}\"" && Background_error "ERROR: 'truenas-${REMOTE_SERVER_ID}:${APP_PATH/LOCATION_TO_INSERT/${REMOTE_SOURCE}${REMOTE_TARGET}}' does not exist. Is the dataset mounted and unlocked?"
+    ! Execute_command local "test -d \"${APP_PATH/LOCATION_TO_INSERT/${LOCAL_SOURCE}${LOCAL_TARGET}}\""    \
+      && Background_error "ERROR: '${APP_PATH/LOCATION_TO_INSERT/${LOCAL_SOURCE}${LOCAL_TARGET}}' does not exist. Is the dataset mounted and unlocked?"
+    ! Execute_command remote "test -d \"${APP_PATH/LOCATION_TO_INSERT/${REMOTE_SOURCE}${REMOTE_TARGET}}\"" \
+      && Background_error "ERROR: 'truenas-${REMOTE_SERVER_ID}:${APP_PATH/LOCATION_TO_INSERT/${REMOTE_SOURCE}${REMOTE_TARGET}}' does not exist. Is the dataset mounted and unlocked?"
+
+    # Backup Immich Postgress DB
+    [[ "${APP_NAME}" == "immich" ]] && Backup_immich_DB "$([[ -n "${LOCAL_SOURCE}" ]] && echo "local" || echo "remote")" ${LOCAL_SOURCE}${REMOTE_SOURCE}
 
     # Stop the application locally and remotely
     for LOCATION in "${LOCATIONS_LIST[@]}"; do
-      Control_container ${APP_NAME} stop ${LOCATION}
+      Control_app_with_checks ${APP_NAME} stop ${LOCATION}
     done
     echo
     
@@ -346,9 +515,12 @@ function Perform_rsync() {
 
     # Start the application locally and remotely if they were stopped
     for LOCATION in "${LOCATIONS_LIST[@]}"; do
-      Control_container ${APP_NAME} start ${LOCATION}
+      Control_app_with_checks ${APP_NAME} start ${LOCATION}
     done
     echo
+
+    # Restore Immich Postgress DB
+    [[ "${APP_NAME}" == "immich" ]] && Restore_immich_DB "$([[ -n "${LOCAL_TARGET}" ]] && echo "local" || echo "remote")" ${LOCAL_TARGET}${REMOTE_TARGET}
   done
 
   echo "### Performing rsync completed ###"
@@ -500,7 +672,7 @@ if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
   echo
 
   # Email the log output
-  echo -e "Subject:Sync from TrueNAS-${LOCAL_SOURCE^}${REMOTE_SOURCE^} to TrueNAS-${LOCAL_TARGET^}${REMOTE_TARGET^} server completed successfully\n\n$(cat ${LOG_FILE})" | sendmail your.email@mail.com
+  echo -e "Subject:Sync from TrueNAS-${LOCAL_SOURCE^}${REMOTE_SOURCE^} to TrueNAS-${LOCAL_TARGET^}${REMOTE_TARGET^} server completed successfully\n\n$(cat ${LOG_FILE})" | sendmail "${EMAIL_TO}"
 
   [[ -n "${TAIL_PID}" ]] && kill "${TAIL_PID}"
 else
