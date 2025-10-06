@@ -1,0 +1,112 @@
+#!/usr/bin/bash
+
+# Resolve paths
+SCRIPT_FILENAME="$(basename "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+LOG_DIR="${SCRIPT_DIR}/../logs"
+[[ ! -d "${LOG_DIR}" ]] && mkdir -p "${LOG_DIR}"
+
+if [[ -f "${SCRIPT_DIR}/../config/config.local.bash" ]]; then
+    source "${SCRIPT_DIR}/../config/config.local.bash"
+else
+    echo "ERROR: No config found. Expected config.local.bash in ../config"
+    exit 1
+fi
+
+# Validate required config
+: "${EMAIL_TO:?ERROR: EMAIL_TO must be set in config.local.bash}"
+: "${SSH_CONFIG_FILE:?ERROR: SSH_CONFIG_FILE must be set in config.local.bash}"
+
+# Derive host roles
+LOCAL_SERVER_ID="$(hostname -s | sed 's/^truenas-//')"
+if [[ "${LOCAL_SERVER_ID}" == "master" ]]; then
+    REMOTE_SERVER_ID="backup"
+elif [[ "${LOCAL_SERVER_ID}" == "backup" ]]; then
+    REMOTE_SERVER_ID="master"
+else
+    echo "ERROR: The hostname ($(hostname -s)) is unknown. Run on truenas-master or truenas-backup."
+    exit 1
+fi
+
+REMOTE_CMD=( ssh -F "${SSH_CONFIG_FILE}" "truenas-${REMOTE_SERVER_ID}" )
+
+# Globals (match existing script behavior)
+TASK=""
+PERFORM_ROLLUP=""
+PERFORM_RSYNC=""
+PERFORM_ZFS_REP_ALL=""
+PERFORM_ZFS_REP_LATEST=""
+RUNNING_IN_BACKGROUND=""
+TEST_MODE=""
+EXEC_DATE="$(date +%Y-%m-%d)"
+LOG_FILE="${LOG_DIR}/${SCRIPT_FILENAME}.$(date +"%Y-%m-%d_%H-%M").log"
+DB_RESTORE_LOG="${LOG_DIR}/${SCRIPT_FILENAME}_DB_Restore.$(date +"%Y-%m-%d_%H-%M").log"
+BACKUP_OPTIONS=( "$@" )
+
+LOCAL_SOURCE=""
+REMOTE_SOURCE=""
+LOCAL_TARGET=""
+REMOTE_TARGET=""
+APPS_LIST=( "plex" "immich" )
+
+# Source modules
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/common.bash"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/cli.bash"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/apps.bash"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/docker.bash"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/immich_db.bash"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/rsync.bash"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/zfs_rep.bash"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/rollup.bash"
+
+# Entry
+Process_command_line_options "$@"
+if [[ "$(id -un)" != "root" ]]; then
+    echo "ERROR: This script can only be run as root"
+    exit 1
+fi
+
+if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
+    sleep 2
+    TAIL_PID="$(ps -ef | grep "tail -f ${LOG_FILE}" | grep -v grep | awk '{print $2}')"
+    echo "${SCRIPT_FILENAME} is now running in the background, with parent PID ${TAIL_PID}"
+    echo
+    echo "######################################################################"
+    echo "######################################################################"
+    echo "### Performing a sync from TrueNAS-${LOCAL_SOURCE^}${REMOTE_SOURCE^} to TrueNAS-${LOCAL_TARGET^}${REMOTE_TARGET^} server ###"
+    echo "######################################################################"
+    echo "######################################################################"
+    echo
+
+    [[ -n "${PERFORM_RSYNC}" ]]          && Perform_rsync
+    [[ -n "${PERFORM_ZFS_REP_ALL}" ]]    && Perform_zfs_rep all_snapshots
+    [[ -n "${PERFORM_ROLLUP}" ]]         && Perform_rollup
+    [[ -n "${PERFORM_ZFS_REP_LATEST}" ]] && Perform_zfs_rep latest_snapshot_only
+
+    echo "################################################################################"
+    echo "################################################################################"
+    echo "### Sync from TrueNAS-${LOCAL_SOURCE^}${REMOTE_SOURCE^} to TrueNAS-${LOCAL_TARGET^}${REMOTE_TARGET^} server completed successfully ###"
+    echo "################################################################################"
+    echo "################################################################################"
+    echo
+
+    {
+      echo "Subject: Sync from TrueNAS-${LOCAL_SOURCE^}${REMOTE_SOURCE^} to TrueNAS-${LOCAL_TARGET^}${REMOTE_TARGET^} server completed successfully"
+      echo
+      cat "${LOG_FILE}"
+    } | sendmail "${EMAIL_TO}"
+
+    [[ -n "${TAIL_PID}" ]] && kill "${TAIL_PID}"
+else
+    echo "Starting ${SCRIPT_FILENAME} in the background (logfile = ${LOG_FILE})."
+    nohup $0 --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"  >>"${LOG_FILE}" 2>&1 & { sleep 1; tail -f "${LOG_FILE}"; }
+fi
+exit 0
