@@ -34,3 +34,28 @@ function Execute_command() {
 
   return "${RETURN_VALUE}"
 }
+
+function Resolve_pool() {
+    local SERVER_TYPE="$1"
+    local POOL_TYPE="${2:-normal}"   # "fast" or "normal" (default)
+
+    case "${SERVER_TYPE}" in
+        master)
+            case "${POOL_TYPE}" in
+                fast)   echo "ssdmaster-pool" ;;
+                normal) echo "master-pool" ;;
+                *)      Background_error "ERROR: Invalid \$POOL_TYPE '${POOL_TYPE}' for \$SERVER_TYPE '${SERVER_TYPE}'." ;;
+            esac
+            ;;
+        backup)
+            # On backup, both fast and normal map to the same pool
+            case "${POOL_TYPE}" in
+                fast|normal) echo "backup-pool" ;;
+                *) Background_error "ERROR: Invalid \$POOL_TYPE '${POOL_TYPE}' for \$SERVER_TYPE '${SERVER_TYPE}'." ;;
+            esac
+            ;;
+        *)
+            Background_error "ERROR: Unknown \$SERVER_TYPE '${SERVER_TYPE}' when resolving pool (\$POOL_TYPE='${POOL_TYPE}')."
+            ;;
+    esac
+}

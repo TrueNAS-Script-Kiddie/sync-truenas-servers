@@ -6,7 +6,7 @@ function Backup_immich_DB() {
     local LOCATION="$1"
     local SERVER_ID="$2"
 
-    local POOL_NAME="${SERVER_ID/master/ssdmaster}-pool"
+    local POOL_NAME="$(Resolve_pool "${SERVER_ID}" "fast")"
 
     echo "### Making a backup of the Immich Postgres DB ###"
     echo
@@ -75,7 +75,7 @@ function Restore_immich_DB() {
     local LOCATION="$1"
     local SERVER_ID="$2"
 
-    local POOL_NAME="${SERVER_ID/master/ssdmaster}-pool"
+    local POOL_NAME="$(Resolve_pool "${SERVER_ID}" "fast")"
 
     echo "### Restoring the Immich Postgres DB from backup ###"
     echo

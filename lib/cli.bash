@@ -6,7 +6,7 @@ function Help() {
     echo "Help for ${SCRIPT_FILENAME}"
     echo
     echo -e "${SCRIPT_FILENAME} [-h] [--help]\t\t\t\tDisplays this help message."
-    echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>]"
+    echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>] [--vm=<name>*]"
     echo -e "\t\t\t\t\t\t\t\tPerforms the requested sync."
     echo
     echo -e "Optional option = --test"
@@ -19,6 +19,7 @@ function Help() {
     echo "Allowed subtasks:"
     echo -e "all\t\t\t\t\t\t\t\tPerform rsync, ZFS replication and snapshot rollup. This is the default."
     echo -e "rsync\t\t\t\t\t\t\t\tPerform rsync."
+    echo -e "vm_replication\t\t\t\t\t\t\tPerform VM replication."
     echo -e "zfs_replication\t\t\t\t\t\t\tPerform ZFS replication (includes snapshot rollup)."
     echo -e "zfs_replication_without_snapshot_rollup\t\t\t\tPerform ZFS replication without snapshot rollup."
     echo -e "zfs_replication_with_all_snapshots\t\t\t\tPerform ZFS replication with all snapshots (includes snapshot rollup)."
@@ -29,6 +30,9 @@ function Help() {
     echo "Allowed apps:"
     echo -e "immich\t\t\t\t\t\t\t\tLimit the rsync subtask to only copy Immich."
     echo -e "plex\t\t\t\t\t\t\t\tLimit the rsync subtask to only copy Plex."
+    echo
+    echo "Limit VM replication to specific VMs:"
+    echo -e "--vm=<name>\t\t\t\t\t\t\tRepeat this option for each VM: e.g. --vm=VM1 --vm=VM2"
     echo
 
     exit 0
@@ -87,6 +91,10 @@ function Process_command_line_options() {
             l_Subtask_precheck
             PERFORM_RSYNC="true"
             ;;
+        --subtask=vm_replication)
+            l_Subtask_precheck
+            PERFORM_VM_REP="true"
+            ;;
         --subtask=zfs_replication)
             l_Subtask_precheck
             PERFORM_ZFS_REP_ALL="true"
@@ -123,6 +131,9 @@ function Process_command_line_options() {
             l_App_precheck
             APPS_LIST=( "immich" )
             ;;
+        --vm=*)
+            VMS_LIST+=( "${OPTION#--vm=}" )
+            ;;
         --running_in_background)
             RUNNING_IN_BACKGROUND="true"
             LOG_FILE="$1"
@@ -139,13 +150,23 @@ function Process_command_line_options() {
     done
 
     [[ -z "${TASK}" ]] && Help
-    if [[ -z "${PERFORM_ROLLUP}" && -z "${PERFORM_RSYNC}" && -z "${PERFORM_ZFS_REP_ALL}" && -z "${PERFORM_ZFS_REP_LATEST}" ]]; then
+
+    # When no subtask is specified, then all subtasks are enabled by default
+    if [[ -z "${PERFORM_ROLLUP}" && -z "${PERFORM_RSYNC}" && -z "${PERFORM_VM_REP}" && -z "${PERFORM_ZFS_REP_ALL}" && -z "${PERFORM_ZFS_REP_LATEST}" ]]; then
         PERFORM_ROLLUP="true"
         PERFORM_RSYNC="true"
+        PERFORM_VM_REP="true"
         PERFORM_ZFS_REP_ALL="true"
         PERFORM_ZFS_REP_LATEST="true"
     fi
+
+    # --vm is only allowed if $PERFORM_VM_REP=true
+    if [[ "${#VMS_LIST[@]}" -gt 0 && -z "${PERFORM_VM_REP}" ]]; then
+        echo "ERROR: --vm can only be used when the \$PERFORM_VM_REP is true."
+        exit 1
+    fi
     
+    # Define source and target
     if   [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "master" ]]; then
         REMOTE_SOURCE="backup"
         LOCAL_TARGET="master"

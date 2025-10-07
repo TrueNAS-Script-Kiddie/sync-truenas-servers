@@ -34,6 +34,7 @@ REMOTE_CMD=( ssh -F "${SSH_CONFIG_FILE}" "truenas-${REMOTE_SERVER_ID}" )
 TASK=""
 PERFORM_ROLLUP=""
 PERFORM_RSYNC=""
+PERFORM_VM_REP=""
 PERFORM_ZFS_REP_ALL=""
 PERFORM_ZFS_REP_LATEST=""
 RUNNING_IN_BACKGROUND=""
@@ -48,24 +49,18 @@ REMOTE_SOURCE=""
 LOCAL_TARGET=""
 REMOTE_TARGET=""
 APPS_LIST=( "plex" "immich" )
+VMS_LIST=()                         # empty means “all VMs”
 
 # Source modules
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/common.bash"
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/cli.bash"
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/apps.bash"
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/docker.bash"
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/immich_db.bash"
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/rsync.bash"
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/zfs_rep.bash"
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/rollup.bash"
+source "${SCRIPT_DIR}/../lib/vm.bash"
 
 # Entry
 Process_command_line_options "$@"
@@ -87,6 +82,7 @@ if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
     echo
 
     [[ -n "${PERFORM_RSYNC}" ]]          && Perform_rsync
+    [[ -n "${PERFORM_VM_REP}" ]]         && Perform_vm_replication
     [[ -n "${PERFORM_ZFS_REP_ALL}" ]]    && Perform_zfs_rep all_snapshots
     [[ -n "${PERFORM_ROLLUP}" ]]         && Perform_rollup
     [[ -n "${PERFORM_ZFS_REP_LATEST}" ]] && Perform_zfs_rep latest_snapshot_only

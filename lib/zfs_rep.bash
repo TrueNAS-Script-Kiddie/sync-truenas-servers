@@ -3,7 +3,7 @@
 # ZFS replication orchestration
 
 function Perform_zfs_rep() {
-    function l_Check_scope() {
+    function l_Print_scope() {
         if [[ "${SCOPE}" == "all_snapshots" ]]; then
             ZFS_AUTOBACKUP_TASK_OPTARGS="--other-snapshots ${TASK_SCOPE} ${TARGET_PARENT_DATASET}"
 
@@ -61,24 +61,24 @@ function Perform_zfs_rep() {
     local ZFS_AUTOBACKUP_OPTARGS="--strip-path 2 --exclude-received"
     local SSH_OPTARGS TARGET_PARENT_DATASET IMPACTED_DATASETS ZFS_AUTOBACKUP_TASK_OPTARGS
 
-    [[ "$(Execute_command local "zfs list -H -o mounted ${LOCAL_SERVER_ID}-pool/encrypted-ds")" == "no" ]]   && Background_error "ERROR: ${LOCAL_SERVER_ID}-pool/encrypted-ds on truenas-${LOCAL_SERVER_ID} is not mounted (and/or unlocked)."
-    [[ "$(Execute_command remote "zfs list -H -o mounted ${REMOTE_SERVER_ID}-pool/encrypted-ds")" == "no" ]] && Background_error "ERROR: ${REMOTE_SERVER_ID}-pool/encrypted-ds on truenas-${REMOTE_SERVER_ID} is not mounted (and/or unlocked)."
+    [[ "$(Execute_command local "zfs list -H -o mounted $(Resolve_pool "${LOCAL_SERVER_ID}")/encrypted-ds")" == "no" ]]   && Background_error "ERROR: $(Resolve_pool "${LOCAL_SERVER_ID}")/encrypted-ds on truenas-${LOCAL_SERVER_ID} is not mounted (and/or unlocked)."
+    [[ "$(Execute_command remote "zfs list -H -o mounted $(Resolve_pool "${REMOTE_SERVER_ID}")/encrypted-ds")" == "no" ]] && Background_error "ERROR: $(Resolve_pool "${REMOTE_SERVER_ID}")/encrypted-ds on truenas-${REMOTE_SERVER_ID} is not mounted (and/or unlocked)."
 
     if [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "master" ]] || \
         [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "backup" ]]; then
         SSH_OPTARGS="--ssh-config ${SSH_CONFIG_FILE} --ssh-source truenas-${REMOTE_SOURCE}"
-        TARGET_PARENT_DATASET="${LOCAL_TARGET}-pool/encrypted-ds"
+        TARGET_PARENT_DATASET="$(Resolve_pool "${LOCAL_TARGET}")/encrypted-ds"
         IMPACTED_DATASETS="$(Execute_command $([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote) "zfs list -H | awk '{print \$1}' | xargs zfs get -o name,property all | grep \" autobackup:${TASK_SCOPE}\" | awk '{print \$1}' | xargs basename -a 2>/dev/null")"
 
-        l_Check_scope
+        l_Print_scope
         l_Execute_replication_and_remount
     elif [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "backup" ]] || \
         [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "master" ]]; then
         SSH_OPTARGS="--ssh-config ${SSH_CONFIG_FILE} --ssh-target truenas-${REMOTE_TARGET}"
-        TARGET_PARENT_DATASET="${REMOTE_TARGET}-pool/encrypted-ds"
+        TARGET_PARENT_DATASET="$(Resolve_pool "${REMOTE_TARGET}")/encrypted-ds"
         IMPACTED_DATASETS="$(Execute_command $([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote) "zfs list -H | awk '{print \$1}' | xargs zfs get -o name,property all | grep \" autobackup:${TASK_SCOPE}\" | awk '{print \$1}' | xargs basename -a 2>/dev/null")"
 
-        l_Check_scope
+        l_Print_scope
         l_Execute_replication_and_remount
     fi
 
