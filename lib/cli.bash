@@ -9,8 +9,12 @@ function Help() {
     echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>] [--vm=<name>*]"
     echo -e "\t\t\t\t\t\t\t\tPerforms the requested sync."
     echo
-    echo -e "Optional option = --test"
+    echo -e "--test"
     echo -e "\tThis option forces the script not change anything. It does stop/start containers."
+    echo
+    echo -e "--vm=<name>"
+    echo -e "\tThis option limits VM replication to specific VMs."
+    echo -e "\tRepeat this option for each VM: e.g. --vm=VM1 --vm=VM2"
     echo
     echo "Allowed tasks:"
     echo -e "master_to_backup\t\t\t\t\t\tPerform a sync from the TrueNAS-Master server to the TrueNAS-Backup server (= backup)."
@@ -31,9 +35,6 @@ function Help() {
     echo -e "immich\t\t\t\t\t\t\t\tLimit the rsync subtask to only copy Immich."
     echo -e "plex\t\t\t\t\t\t\t\tLimit the rsync subtask to only copy Plex."
     echo
-    echo "Limit VM replication to specific VMs:"
-    echo -e "--vm=<name>\t\t\t\t\t\t\tRepeat this option for each VM: e.g. --vm=VM1 --vm=VM2"
-    echo
 
     exit 0
 }
@@ -51,13 +52,6 @@ function Process_command_line_options() {
                 echo "ERROR: You may only choose 1 subtask!"
                 exit 1
             fi
-    }
-
-    function l_App_precheck() {
-        if [[ "${#APPS_LIST[@]}" -ne "2"  ]]; then
-            echo "ERROR: You may only choose 1 app when using --app!"
-            exit 1
-        fi
     }
 
     local OPTION
@@ -124,15 +118,13 @@ function Process_command_line_options() {
             PERFORM_ROLLUP="true"
             ;;
         --app=plex)
-            l_App_precheck
-            APPS_LIST=( "plex" )
+            APP_LIST+=( "plex" )
             ;;
         --app=immich)
-            l_App_precheck
-            APPS_LIST=( "immich" )
+            APP_LIST+=( "immich" )
             ;;
         --vm=*)
-            VMS_LIST+=( "${OPTION#--vm=}" )
+            VM_LIST+=( "${OPTION#--vm=}" )
             ;;
         --running_in_background)
             RUNNING_IN_BACKGROUND="true"
@@ -161,23 +153,16 @@ function Process_command_line_options() {
     fi
 
     # --vm is only allowed if $PERFORM_VM_REP=true
-    if [[ "${#VMS_LIST[@]}" -gt 0 && -z "${PERFORM_VM_REP}" ]]; then
-        echo "ERROR: --vm can only be used when the \$PERFORM_VM_REP is true."
+    if [[ "${#VM_LIST[@]}" -gt 0 && -z "${PERFORM_VM_REP}" ]]; then
+        echo "ERROR: --vm can only be used when the vm_replication subtask is enabled."
         exit 1
     fi
     
     # Define source and target
-    if   [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "master" ]]; then
-        REMOTE_SOURCE="backup"
-        LOCAL_TARGET="master"
-    elif [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "backup" ]]; then
-        LOCAL_SOURCE="backup"
-        REMOTE_TARGET="master"
-    elif   [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "master" ]]; then
-        LOCAL_SOURCE="master"
-        REMOTE_TARGET="backup"
-    elif [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "backup" ]]; then
-        REMOTE_SOURCE="master"
-        LOCAL_TARGET="backup"
-    fi
+    case "${TASK}:${LOCAL_SERVER_ID}" in
+        backup_to_master:master) REMOTE_SOURCE="backup"; LOCAL_TARGET="master" ;;
+        backup_to_master:backup) LOCAL_SOURCE="backup"; REMOTE_TARGET="master" ;;
+        master_to_backup:master) LOCAL_SOURCE="master"; REMOTE_TARGET="backup" ;;
+        master_to_backup:backup) REMOTE_SOURCE="master"; LOCAL_TARGET="backup" ;;
+    esac
 }

@@ -28,7 +28,7 @@ function Perform_rsync() {
     echo "########################"
     echo
 
-    for APP_NAME in "${APPS_LIST[@]}"; do
+    for APP_NAME in "${APP_LIST[@]}"; do
         REMOTE_STOPPED_LIST=()
         LOCAL_STOPPED_LIST=()
 

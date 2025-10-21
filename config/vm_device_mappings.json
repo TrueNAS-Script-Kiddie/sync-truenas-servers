@@ -1,0 +1,32 @@
+{
+  "DISK": {
+    "_doc": "Rules apply to devices where attributes.dtype == DISK",
+    "path": [
+      {
+        "scope": "/encrypted-ds/app-ds",
+        "master": "ssdmaster-pool/encrypted-ds/app-ds",
+        "backup": "backup-pool/encrypted-ds/app-ds"
+      },
+      {
+        "scope": "/encrypted-ds/vm-ds",
+        "master": "ssdmaster-pool/encrypted-ds/vm-ds",
+        "backup": "backup-pool/encrypted-ds/vm-ds"
+      },
+      {
+        "scope": "/encrypted-ds/media-ds",
+        "master": "master-pool/encrypted-ds/media-ds",
+        "backup": "backup-pool/encrypted-ds/media-ds"
+      }
+    ]
+  },
+  "NIC": {
+    "_doc": "Rules apply to devices where attributes.dtype == NIC",
+    "nic_attach": [
+      {
+        "scope": null,
+        "master": "enp1s0f1",
+        "backup": "ens6"
+      }
+    ]
+  }
+}

@@ -13,7 +13,7 @@ function Wait_for_docker_state() {
     local ELAPSED_TIME
 
     while true; do
-        CURRENT_STATE=$(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}} {{.State}}' | grep \"${CONTAINER}\" | awk '{print \$2}'")
+        CURRENT_STATE=$(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}} {{.State}}' | grep \"${CONTAINER_NAME}\" | awk '{print \$2}'")
         [[ "$CURRENT_STATE" == "$DESIRED_STATE" ]] && break
         CURRENT_TIME="$(date +%s)"
         ELAPSED_TIME="$((CURRENT_TIME - START_TIME))"

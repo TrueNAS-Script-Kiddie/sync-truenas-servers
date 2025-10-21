@@ -1,9 +1,10 @@
 #!/usr/bin/bash
 
 # Resolve paths
-SCRIPT_FILENAME="$(basename "$0")"
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-LOG_DIR="${SCRIPT_DIR}/../logs"
+declare SCRIPT_FILENAME="$(basename "$0")"
+declare SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+declare LOG_DIR="${SCRIPT_DIR}/../logs"
+
 [[ ! -d "${LOG_DIR}" ]] && mkdir -p "${LOG_DIR}"
 
 if [[ -f "${SCRIPT_DIR}/../config/config.local.bash" ]]; then
@@ -18,11 +19,11 @@ fi
 : "${SSH_CONFIG_FILE:?ERROR: SSH_CONFIG_FILE must be set in config.local.bash}"
 
 # Derive host roles
-LOCAL_SERVER_ID="$(hostname -s | sed 's/^truenas-//')"
+declare LOCAL_SERVER_ID="$(hostname -s | sed 's/^truenas-//')"
 if [[ "${LOCAL_SERVER_ID}" == "master" ]]; then
-    REMOTE_SERVER_ID="backup"
+    declare REMOTE_SERVER_ID="backup"
 elif [[ "${LOCAL_SERVER_ID}" == "backup" ]]; then
-    REMOTE_SERVER_ID="master"
+    declare REMOTE_SERVER_ID="master"
 else
     echo "ERROR: The hostname ($(hostname -s)) is unknown. Run on truenas-master or truenas-backup."
     exit 1
@@ -31,25 +32,26 @@ fi
 REMOTE_CMD=( ssh -F "${SSH_CONFIG_FILE}" "truenas-${REMOTE_SERVER_ID}" )
 
 # Globals (match existing script behavior)
-TASK=""
-PERFORM_ROLLUP=""
-PERFORM_RSYNC=""
-PERFORM_VM_REP=""
-PERFORM_ZFS_REP_ALL=""
-PERFORM_ZFS_REP_LATEST=""
-RUNNING_IN_BACKGROUND=""
-TEST_MODE=""
-EXEC_DATE="$(date +%Y-%m-%d)"
-LOG_FILE="${LOG_DIR}/${SCRIPT_FILENAME}.$(date +"%Y-%m-%d_%H-%M").log"
-DB_RESTORE_LOG="${LOG_DIR}/${SCRIPT_FILENAME}_DB_Restore.$(date +"%Y-%m-%d_%H-%M").log"
-BACKUP_OPTIONS=( "$@" )
+declare TASK
+declare PERFORM_ROLLUP
+declare PERFORM_RSYNC
+declare PERFORM_VM_REP
+declare PERFORM_ZFS_REP_ALL
+declare PERFORM_ZFS_REP_LATEST
+declare RUNNING_IN_BACKGROUND
+declare TEST_MODE
+declare EXEC_DATE="$(date +%Y-%m-%d)"
+declare LOG_FILE="${LOG_DIR}/${SCRIPT_FILENAME}.$(date +"%Y-%m-%d_%H-%M").log"
+declare DB_RESTORE_LOG="${LOG_DIR}/${SCRIPT_FILENAME}_DB_Restore.$(date +"%Y-%m-%d_%H-%M").log"
+declare BACKUP_OPTIONS=( "$@" )
 
-LOCAL_SOURCE=""
-REMOTE_SOURCE=""
-LOCAL_TARGET=""
-REMOTE_TARGET=""
-APPS_LIST=( "plex" "immich" )
-VMS_LIST=()                         # empty means “all VMs”
+declare LOCAL_SOURCE
+declare REMOTE_SOURCE
+declare LOCAL_TARGET
+declare REMOTE_TARGET
+
+declare -a APP_LIST=( "plex" "immich" )
+declare -a VM_LIST=()                         # empty means “all VMs”
 
 # Source modules
 source "${SCRIPT_DIR}/../lib/common.bash"
@@ -60,7 +62,7 @@ source "${SCRIPT_DIR}/../lib/immich_db.bash"
 source "${SCRIPT_DIR}/../lib/rsync.bash"
 source "${SCRIPT_DIR}/../lib/zfs_rep.bash"
 source "${SCRIPT_DIR}/../lib/rollup.bash"
-source "${SCRIPT_DIR}/../lib/vm.bash"
+source "${SCRIPT_DIR}/../lib/vms.bash"
 
 # Entry
 Process_command_line_options "$@"
