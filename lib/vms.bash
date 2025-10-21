@@ -594,34 +594,25 @@ function Verify_and_recreate_vm() {
     fi
 
     # Create the VM shell
-    echo
-    echo "Creating VM '${VM}' on truenas-${TARGET_SERVER_ID} from json..."
+    echo "Creating VM '${VM}' on truenas-${TARGET_SERVER_ID} from json... "
     local SHELL_JSON
     SHELL_JSON="$(jq -c 'del(.id, .status, .display_available, .devices)' "${TRANSFORMED_VM_JSON_FILE}")"
 
     local CREATE_OUT
-    CREATE_OUT="$(Execute_command "${TARGET_LOCATION}" "midclt call vm.create '${SHELL_JSON}'")" \
-        || { echo " failed."; return 1; }
+    if ! CREATE_OUT="$(Execute_command "${TARGET_LOCATION}" "midclt call vm.create '${SHELL_JSON}'")"; then
+        echo "Failed."
+        return 1
+    fi
 
     local VM_ID
     VM_ID="$(jq -r '.id' <<<"${CREATE_OUT}")"
     echo "  Created VM shell for '${VM}' with id=${VM_ID}"
 
     # Add devices one by one
-    jq -c '
-        .devices | to_entries[]
-        | {
-            dtype: (.value.dtype // .value.attributes.dtype),
-            attributes: (
-                .value.attributes
-                | del(.id, .vm, .order)
-            )
-        }
-    ' "${TRANSFORMED_VM_JSON_FILE}" \
-    | while IFS= read -r dev; do
+    while IFS= read -r DEVICE; do
         local DTYPE ATTRS PAYLOAD
-        DTYPE="$(jq -r '.dtype' <<<"${dev}")"
-        ATTRS="$(jq -c '.attributes' <<<"${dev}")"
+        DTYPE="$(jq -r '.dtype' <<<"${DEVICE}")"
+        ATTRS="$(jq -c '.attributes' <<<"${DEVICE}")"
 
         # Build payload with dtype inside attributes
         PAYLOAD="$(jq -n \
@@ -630,19 +621,23 @@ function Verify_and_recreate_vm() {
             --argjson vm "${VM_ID}" \
             '{vm: $vm|tonumber, attributes: ($attrs + {dtype: $dtype})}')"
 
-        echo
-        echo "DEBUG: device object:"
-        echo "${dev}" | jq .
-        echo "DEBUG: final payload to send:"
-        echo "${PAYLOAD}" | jq .
-
-        echo -n "  -> Adding ${DTYPE}..."
-        Execute_command "${TARGET_LOCATION}" \
-            "midclt call vm.device.create '${PAYLOAD}'" \
-            && echo " ok." \
-            || echo " failed."
-    done
-
+        echo -n "  Adding ${DTYPE} device... "
+        if Execute_command "${TARGET_LOCATION}" "midclt call vm.device.create '${PAYLOAD}' &>/dev/null"; then
+            echo "Ok."
+        else
+            echo "Failed."
+            return 1
+        fi
+    done < <(jq -c '
+        .devices | to_entries[]
+        | {
+            dtype: (.value.dtype // .value.attributes.dtype),
+            attributes: (
+                .value.attributes
+                | del(.id, .vm, .order)
+            )
+        }
+    ' "${TRANSFORMED_VM_JSON_FILE}")
     echo
 }
 

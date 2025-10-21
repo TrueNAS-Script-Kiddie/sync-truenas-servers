@@ -103,7 +103,5 @@ function Perform_zfs_rep() {
         echo
         echo "### Performing ZFS Replication completed ###"
         echo
-    else
-        echo
     fi
 }
