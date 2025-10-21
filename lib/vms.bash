@@ -14,17 +14,27 @@ declare -a SOURCE_EXTRACTED_VM_LIST=()
 function Vm_in_scope() {
     local SOURCE_OR_TARGET="$1"
     local VM="$2"
+    local ITEM
 
     if [[ "${SOURCE_OR_TARGET}" == "SOURCE" ]]; then
         if [[ "${#VM_LIST[@]}" -eq 0 ]]; then
+            # No filter list: all VMs are in scope
             return 0
         else
-            [[ " ${VM_LIST[*]} " =~ " ${VM} " ]]
-            return $?
+            for ITEM in "${VM_LIST[@]}"; do
+                if [[ "${ITEM}" == "${VM}" ]]; then
+                    return 0
+                fi
+            done
+            return 1
         fi
     elif [[ "${SOURCE_OR_TARGET}" == "TARGET" ]]; then
-        [[ " ${SOURCE_EXTRACTED_VM_LIST[*]} " =~ " ${VM} " ]]
-        return $?
+        for ITEM in "${SOURCE_EXTRACTED_VM_LIST[@]}"; do
+            if [[ "${ITEM}" == "${VM}" ]]; then
+                return 0
+            fi
+        done
+        return 1
     fi
 }
 
@@ -507,11 +517,11 @@ function Rsync_vm_file_disks() {
             }
 
             # Find the corresponding target path by device id
-            TARGET_PATH="$(jq -r --arg VM "${VM}" --argjson ID "${DEV_ID}" '
-                .[] | select(.name==$VM) | .devices[]
-                | select(.id==$ID)
+            TARGET_PATH="$(jq -r --argjson DEV_ID "${DEV_ID}" '
+                .devices[]
+                | select(.id==$DEV_ID)
                 | .attributes.path
-            ' <<< "${TARGET_ALL_VM_JSON}")"
+            ' "${TRANSFORMED_VM_JSON_FILE}")"
 
             if [[ -z "${TARGET_PATH}" || "${TARGET_PATH}" == "null" ]]; then
                 Background_error "ERROR: No matching target path for device id=${DEV_ID} in VM '${VM}'"
@@ -576,10 +586,30 @@ function Verify_and_recreate_vm() {
 
     # Verify all disks exist
     while IFS= read -r DISK_PATH; do
+        local REL_DISK_PATH=""
         if [[ "${DISK_PATH}" =~ ^/dev/zvol/ ]]; then
-            local REL="${DISK_PATH#/dev/zvol/}"
-            Execute_command "${TARGET_LOCATION}" "zfs list -H \"${REL}\" &>/dev/null" \
-                || MISSING+=( "${REL}" )
+            REL_DISK_PATH="${DISK_PATH#/dev/zvol/}"   # pool/dataset/...
+            Execute_command "${TARGET_LOCATION}" "zfs list -H \"${REL_DISK_PATH}\" &>/dev/null" \
+                || MISSING+=( "${REL_DISK_PATH}" )
+
+        elif [[ "${DISK_PATH}" =~ ^/mnt/ ]]; then
+            # Normalize /mnt/<POOL>/... to POOL/...
+            REL_DISK_PATH="${DISK_PATH#/mnt/}"
+            if Execute_command "${TARGET_LOCATION}" "zfs list -H \"${REL_DISK_PATH}\" &>/dev/null"; then
+                :
+            elif Execute_command "${TARGET_LOCATION}" "test -f \"${DISK_PATH}\""; then
+                :
+            else
+                MISSING+=( "${DISK_PATH}" )
+            fi
+
+        else
+            if [[ -b "${DISK_PATH}" ]]; then
+                # raw block device exists
+                :
+            else
+                MISSING+=( "${DISK_PATH}" )
+            fi
         fi
     done < <(jq -r '
         .devices | to_entries[]
