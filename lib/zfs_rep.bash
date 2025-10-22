@@ -42,7 +42,7 @@ function Perform_zfs_rep() {
         [[ -n "${TEST_MODE}" ]] && EXEC_MODE+="_test"
 
         for IMPACTED_DATASET in ${IMPACTED_DATASETS}; do
-            if Execute_command "${EXEC_MODE}" "zfs get -H -o value type,mounted '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}' | grep -q '^filesystem[[:space:]]*yes$'"; then
+            if Execute_command "${EXEC_MODE}" "zfs get -H -o value type,mounted '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}' 2>/dev/null | paste -sd' ' - | grep -q '^filesystem[[:space:]]*yes$'"; then
                 echo "  Executing $([[ -n "${LOCAL_TARGET}" ]] && echo locally || echo remotely): zfs umount '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
                 Execute_command "${EXEC_MODE}" "zfs umount '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
                 UMOUNT_DONE="true"
@@ -61,7 +61,7 @@ function Perform_zfs_rep() {
         cd - >/dev/null
 
         for IMPACTED_DATASET in ${IMPACTED_DATASETS}; do
-            if Execute_command "${EXEC_MODE}" "zfs get -H -o value type,mounted '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}' | grep -q '^filesystem[[:space:]]*no$'"; then
+            if Execute_command "${EXEC_MODE}" "zfs get -H -o value type,mounted '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}' 2>/dev/null | paste -sd' ' - | grep -q '^filesystem[[:space:]]*no$'"; then
                 echo "  Executing $([[ -n "${LOCAL_TARGET}" ]] && echo locally || echo remotely): zfs mount '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
                 Execute_command "${EXEC_MODE}" "zfs mount '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
             fi
@@ -75,8 +75,10 @@ function Perform_zfs_rep() {
 
     local SNAPSHOT_OPTARGS="--rollback --keep-source=0 --keep-target=0 --allow-empty --snapshot-format {}-%Y-%m-%d_%H-%M"
     local ZFS_OPTARGS="--zfs-compressed --decrypt --clear-refreservation"
-    local ZFS_AUTOBACKUP_OPTARGS="--strip-path 2 --exclude-received"
+    local ZFS_AUTOBACKUP_OPTARGS
     local SSH_OPTARGS TARGET_PARENT_DATASET IMPACTED_DATASETS ZFS_AUTOBACKUP_TASK_OPTARGS
+
+    [[ "${SCOPE}" == "vm_latest_snapshot_only" ]] && ZFS_AUTOBACKUP_OPTARGS="--strip-path 3 --exclude-received" || ZFS_AUTOBACKUP_OPTARGS="--strip-path 2 --exclude-received"
 
     [[ "$(Execute_command local "zfs list -H -o mounted $(Resolve_pool "${LOCAL_SERVER_ID}" "${POOL_TYPE}")/encrypted-ds")" == "no" ]]   && Background_error "ERROR: $(Resolve_pool "${LOCAL_SERVER_ID}")/encrypted-ds on truenas-${LOCAL_SERVER_ID} is not mounted (and/or unlocked)."
     [[ "$(Execute_command remote "zfs list -H -o mounted $(Resolve_pool "${REMOTE_SERVER_ID}" "${POOL_TYPE}")/encrypted-ds")" == "no" ]] && Background_error "ERROR: $(Resolve_pool "${REMOTE_SERVER_ID}")/encrypted-ds on truenas-${REMOTE_SERVER_ID} is not mounted (and/or unlocked)."
