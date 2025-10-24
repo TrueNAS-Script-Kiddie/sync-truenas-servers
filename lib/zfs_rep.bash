@@ -10,7 +10,7 @@ function Perform_zfs_rep() {
             echo "###################################################"
             echo "### Performing ZFS Replication of all snapshots ###"
             echo "###################################################"
-            echo "Following filesystems are impacted: ${IMPACTED_DATASETS//$'\n'/ / }"
+            ( IFS=", "; echo "Following filesystems are impacted: ${IMPACTED_DATASETS[*]}" )
             echo
 
         elif [[ "${SCOPE}" == "latest_snapshot_only" ]]; then
@@ -19,14 +19,14 @@ function Perform_zfs_rep() {
             echo "#########################################################"
             echo "### Performing ZFS Replication of the latest snapshot ###"
             echo "#########################################################"
-            echo "Following filesystems are impacted: ${IMPACTED_DATASETS//$'\n'/ / }"
+            ( IFS=", "; echo "Following filesystems are impacted: ${IMPACTED_DATASETS[*]}" )
             echo
 
         elif [[ "${SCOPE}" == "vm_latest_snapshot_only" ]]; then
             ZFS_AUTOBACKUP_TASK_OPTARGS=" ${TASK_SCOPE} ${TARGET_PARENT_DATASET}"
 
             echo "Performing ZFS Replication of the latest snapshot for the VM '${VM}'"
-            echo "  Following zvols are impacted: ${IMPACTED_DATASETS//$'\n'/ / }"
+            ( IFS=", "; echo "  Following zvols are impacted: ${IMPACTED_DATASETS[*]}" )
             echo
         fi
     }
@@ -55,8 +55,9 @@ function Perform_zfs_rep() {
                 if Execute_command "${EXEC_MODE}" \
                     "zfs get -H -o value type,mounted '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}' 2>/dev/null \
                      | paste -sd' ' - \
-                     | grep -q '^filesystem[[:space:]]*${EXPECTED}$'"; then
-                    echo "  Executing $([[ -n \"${LOCAL_TARGET}\" ]] && echo locally || echo remotely): zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
+                     | grep -q '^filesystem[[:space:]]*${EXPECTED}\$'"; then
+                   # echo "  Executing $([[ -n \"${LOCAL_TARGET}\" ]] && echo locally || echo remotely): zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
+                    echo "  truenas-${TARGET_SERVER_ID} - zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
                     Execute_command "${EXEC_MODE}" "zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
                     CHANGED="true"
                     [[ "${ACTION}" == "umount" ]] && UNMOUNTED_LIST+=( "${IMPACTED_DATASET}" )
@@ -68,7 +69,7 @@ function Perform_zfs_rep() {
         EXEC_MODE="$([[ -n "${LOCAL_TARGET}" ]] && echo local || echo remote)"
         [[ -n "${TEST_MODE}" ]] && EXEC_MODE+="_test"
 
-        l_Toggle_mounts "umount" "${IMPACTED_DATASETS}"
+        l_Toggle_mounts "umount" "${IMPACTED_DATASETS[@]}"
 
         # --- Run zfs_autobackup ---
         cd "${ZFS_AUTOBACKUP_FOLDER}" || Background_error "ERROR: Cannot cd into ${ZFS_AUTOBACKUP_FOLDER}"
@@ -112,12 +113,14 @@ function Perform_zfs_rep() {
         TARGET_PARENT_DATASET="$(Resolve_pool "${REMOTE_TARGET}" "${POOL_TYPE}")/encrypted-ds"
     fi
 
-    IMPACTED_DATASETS="$(Execute_command $([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote) \
-        "zfs list -H -o name \
-         | xargs zfs get -o name,property all \
-         | grep \" autobackup:${TASK_SCOPE}\" \
-         | awk '{print \$1}' \
-         | sed -E 's|.*/encrypted-ds/||'")"
+    mapfile -t IMPACTED_DATASETS < <(
+        Execute_command $([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote) \
+            "zfs list -H -o name \
+            | xargs zfs get -o name,property all \
+            | grep \" autobackup:${TASK_SCOPE}\" \
+            | awk '{print \$1}' \
+            | sed -E 's|.*/encrypted-ds/||'"
+    )
 
     l_Print_scope
     l_Execute_replication_and_remount
