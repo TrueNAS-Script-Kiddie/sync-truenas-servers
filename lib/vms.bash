@@ -69,6 +69,7 @@ function Extract_vm_definitions() {
     for SOURCE_OR_TARGET in SOURCE TARGET; do
         local LOCATION SERVER_ID_VAR SERVER_ID ALL_VM_JSON
         local -n SOURCE_OR_TARGET_ALL_VM_JSON_REF="${SOURCE_OR_TARGET}_ALL_VM_JSON"
+        local VM_NAMES
 
         LOCATION="${!SOURCE_OR_TARGET}"
         SERVER_ID_VAR="${LOCATION^^}_SERVER_ID"
@@ -84,7 +85,8 @@ function Extract_vm_definitions() {
             continue
         fi
 
-        while IFS= read -r VM; do
+        mapfile -t VM_NAMES < <(jq -r '.[].name' <<<"${ALL_VM_JSON}")
+        for VM in "${VM_NAMES[@]}"; do
             if ! Vm_in_scope "${SOURCE_OR_TARGET}" "${VM}"; then
                 echo "truenas-${SERVER_ID} - VM '${VM}' not in scope for replication"
                 continue
@@ -95,9 +97,8 @@ function Extract_vm_definitions() {
 
             echo "truenas-${SERVER_ID} - Extracted ${VM_TMP_DIR}/json/per_vm/${VM}.truenas-${SERVER_ID}.${SOURCE_OR_TARGET,,}.json"
 
-            # Record SOURCE VMs for later TARGET filtering
             [[ "${SOURCE_OR_TARGET}" == "SOURCE" ]] && SOURCE_EXTRACTED_VM_LIST+=("${VM}")
-        done < <(jq -r '.[].name' <<<"${ALL_VM_JSON}")
+        done
     done
 }
 
@@ -260,7 +261,7 @@ function Transform_vm_definition() {
     fi
 
     # 6) Final: publish transformed/destination JSON file
-    echo "  truenas-${TARGET_SERVER_ID} - Transformed ${TRANSFORMED_VM_JSON_FILE}"
+    echo "  truenas-${LOCAL_SERVER_ID} - Transformed source json into ${TRANSFORMED_VM_JSON_FILE}"
     echo
 }
 
@@ -272,25 +273,24 @@ function Cleanup_vm_disk_tags() {
     local POOL_NAME
     local TASK_SCOPE
     local DS
-    local TAGGED_DATASETS
+    local TAGGED_DATASET_LIST
 
     SERVER_ID_VAR="${SOURCE_LOCATION^^}_SERVER_ID"
     SERVER_ID="${!SERVER_ID_VAR}"
     POOL_NAME="$(Resolve_pool "${SERVER_ID}" "fast")"
     TASK_SCOPE="${TASK}_vm_latest_snapshot_only"
 
-    # Collect all datasets with the tag
-    TAGGED_DATASETS="$(Execute_command "${SOURCE_LOCATION}" \
+    mapfile -t TAGGED_DATASET_LIST < <(Execute_command "${SOURCE_LOCATION}" \
         "zfs get -H -o name,value -t filesystem,volume \"autobackup:${TASK_SCOPE}\" -r \"${POOL_NAME}\" \
-         | awk '\$2==\"true\" {print \$1}'")"
+         | awk '\$2==\"true\" {print \$1}'")
 
-    if [[ -n "${TAGGED_DATASETS}" ]]; then
+    if [[ ${#TAGGED_DATASET_LIST[@]} -gt 0 ]]; then
         echo "Cleaning up the 'autobackup'-tag on all datasets..."
-        while IFS= read -r DS; do
+        for DS in "${TAGGED_DATASET_LIST[@]}"; do
             Execute_command "${SOURCE_LOCATION}" "zfs inherit autobackup:${TASK_SCOPE} \"${DS}\"" \
                 && echo "  'autobackup:${TASK_SCOPE}'-tag removed from '${DS}'" \
                 || Background_error "ERROR: Failed to remove 'autobackup:${TASK_SCOPE}'-tag from ${DS}"
-        done <<< "${TAGGED_DATASETS}"
+        done
         echo
     fi
 }
@@ -301,9 +301,9 @@ function Tag_vm_disks() {
     local SOURCE_LOCATION="$1"
     local VM="$2"
 
-    local DEVICE_PATH
-    local REL
-    local FULL
+    local DEVNODE_DISK_PATH
+    local REL_DISK_PATH
+    local ZFS_DISK_PATH
 
     local TAGGED=0
     local SERVER_ID_VAR="${SOURCE_LOCATION^^}_SERVER_ID"
@@ -311,49 +311,37 @@ function Tag_vm_disks() {
     local POOL_NAME="$(Resolve_pool "${SERVER_ID}" "fast")"
     local TASK_SCOPE="${TASK}_vm_latest_snapshot_only"
 
-    # Collect all DISK device paths for this VM
-    while IFS= read -r DEVICE_PATH; do
-        if [[ "${DEVICE_PATH}" == "/dev/zvol/${POOL_NAME}/encrypted-ds/vm-ds/"* ]]; then
-            REL="${DEVICE_PATH#/dev/zvol/${POOL_NAME}/}"
-            FULL="${POOL_NAME}/${REL}"
-            if Execute_command "${SOURCE_LOCATION}" "zfs list -H \"${FULL}\" >/dev/null 2>&1"; then
+    mapfile -t DISK_PATHS < <(jq -r --arg VM "$VM" '
+    .[] | select(.name==$VM)
+    | .devices[]
+    | select(.attributes.dtype=="DISK")
+    | .attributes.path
+    ' <<< "$SOURCE_ALL_VM_JSON")
+
+    # Iterate the array (no stdin involved)
+    for DEVNODE_DISK_PATH in "${DISK_PATHS[@]}"; do
+        if [[ "${DEVNODE_DISK_PATH}" == "/dev/zvol/${POOL_NAME}/encrypted-ds/vm-ds/"* ]]; then
+            REL_DISK_PATH="${DEVNODE_DISK_PATH#/dev/zvol/${POOL_NAME}/}"
+            ZFS_DISK_PATH="${POOL_NAME}/${REL_DISK_PATH}"
+
+            # Ensure commands don’t read from stdin even if wrappers do
+            if Execute_command "${SOURCE_LOCATION}" \
+                "zfs list -H \"${ZFS_DISK_PATH}\" >/dev/null 2>&1"; then
                 if [[ $TAGGED -eq 0 ]]; then
                     echo "Adding 'autobackup'-tag to the disks of the VM '${VM}'..."
                     TAGGED=1
                 fi
-                Execute_command "${SOURCE_LOCATION}" "zfs set autobackup:${TASK_SCOPE}=true \"${FULL}\"" \
-                    || Background_error "ERROR: Failed to tag ZVOL ${FULL} for VM '${VM}'"
-                echo "  'autobackup:${TASK_SCOPE}'-tag added to '${DEVICE_PATH}'."
+                echo "  truenas-${SOURCE_SERVER_ID} - zfs set autobackup:${TASK_SCOPE}=true \"${ZFS_DISK_PATH}\"${TEST_MODE:+" (Not done because of '--test' usage!)"}"
+                Execute_command "${SOURCE_LOCATION}" \
+                    "zfs set autobackup:${TASK_SCOPE}=true \"${ZFS_DISK_PATH}\"" \
+                    || Background_error "ERROR: Failed to tag ZVOL ${ZFS_DISK_PATH} for VM '${VM}'"
             else
-                Background_error "ERROR: VM '${VM}' refers to non-existent ZVOL ${FULL}"
+                Background_error "ERROR: VM '${VM}' refers to non-existent ZVOL ${ZFS_DISK_PATH}"
             fi
-
-        elif [[ "${DEVICE_PATH}" == "/mnt/${POOL_NAME}/encrypted-ds/vm-ds/"* ]]; then
-            REL="${DEVICE_PATH#/mnt/${POOL_NAME}/}"
-            FULL="${POOL_NAME}/${REL}"
-            if Execute_command "${SOURCE_LOCATION}" "zfs list -H \"${FULL}\" >/dev/null 2>&1"; then
-                if [[ $TAGGED -eq 0 ]]; then
-                    echo "Adding 'autobackup'-tag to the disks of the VM '${VM}'..."
-                    TAGGED=1
-                fi
-                Execute_command "${SOURCE_LOCATION}" "zfs set autobackup:${TASK_SCOPE}=true \"${FULL}\"" \
-                    || Background_error "ERROR: Failed to tag dataset ${FULL} for VM '${VM}'"
-                echo "  'autobackup:${TASK_SCOPE}'-tag added to '${DEVICE_PATH}'."
-            elif Execute_command "${SOURCE_LOCATION}" "test -f \"${DEVICE_PATH}\""; then
-                :
-            else
-                Background_error "ERROR: VM '${VM}' path '${DEVICE_PATH}' is not a dataset or file."
-            fi
-
         else
-            echo "WARNING: VM '${VM}' device path '${DEVICE_PATH}' outside encrypted-ds/vm-ds"
+            echo "WARNING: VM '${VM}' device path '${DEVNODE_DISK_PATH}' outside encrypted-ds/vm-ds"
         fi
-    done < <(jq -r --arg VM "${VM}" '
-        .[] | select(.name==$VM) | .devices
-        | to_entries[]
-        | select(.value.attributes.dtype=="DISK")
-        | .value.attributes.path
-    ' <<< "${SOURCE_ALL_VM_JSON}")
+    done
 
     [[ $TAGGED -eq 1 ]] && echo
 }
@@ -368,8 +356,8 @@ function Delete_vm_on_destination() {
     VM_ID="$(jq -r --arg VM "${VM}" '.[] | select(.name==$VM) | .id' <<< "${TARGET_ALL_VM_JSON}")"
     if [[ -n "${VM_ID}" && "${VM_ID}" != "null" ]]; then
         echo "Deleting VM '${VM}' (id ${VM_ID}) on truenas-${TARGET_SERVER_ID}..."
+        echo "  truenas-${TARGET_SERVER_ID} - midclt call vm.delete ${VM_ID}${TEST_MODE:+" (Not done because of '--test' usage!)"}"
         if [[ -z "${TEST_MODE}" ]]; then
-            echo "  ${TARGET_LOCATION^} execute of: midclt call vm.delete ${VM_ID}"
             Execute_command "${TARGET_LOCATION}" "midclt call vm.delete ${VM_ID} >/dev/null 2>&1" \
                 || Background_error "ERROR: Failed to delete VM '${VM}' on truenas-${TARGET_SERVER_ID}"
         fi
@@ -445,51 +433,17 @@ function Audit_and_cleanup_vm_storage() {
         echo "Cleaning up orphan zvols for VM '${VM}':"
         for ZVOL_REL_PATH in "${ORPHAN_ZVOL_LIST[@]}"; do
             ZVOL_FULL_PATH="${TARGET_POOL}/encrypted-ds/vm-ds/${ZVOL_REL_PATH}"
-            echo "  Removing zvol: ${ZVOL_FULL_PATH}"
+            echo "  truenas-${TARGET_SERVER_ID} - zfs destroy -r ${ZVOL_FULL_PATH}${TEST_MODE:+" (Not done because of '--test' usage!)"}"
             if [[ -z "${TEST_MODE}" ]]; then
-                echo "Execute_command ${TARGET_LOCATION} zfs destroy -r ${ZVOL_FULL_PATH}"
-#                Execute_command "${TARGET_LOCATION}" "zfs destroy -r \"${ZVOL_FULL_PATH}\"" \
-#                    || Background_error "ERROR: Failed to destroy orphan zvol ${ZVOL_FULL_PATH}"
+                Execute_command "${TARGET_LOCATION}" "zfs destroy -r \"${ZVOL_FULL_PATH}\"" \
+                    || Background_error "ERROR: Failed to destroy orphan zvol ${ZVOL_FULL_PATH}"
             fi
         done
-    fi
-
-    # --- Non‑zvol warnings ---
-    local SOURCE_DEVICE_PATH
-    local TARGET_DEVICE_PATH
-    local -a ORPHAN_NONZVOL_LIST=()
-
-    for TARGET_DEVICE_PATH in "${TARGET_VM_PATH_LIST[@]}"; do
-        if [[ "${TARGET_DEVICE_PATH}" == /dev/zvol/${TARGET_POOL}/encrypted-ds/vm-ds/* ]]; then
-            continue
-        fi
-        if [[ "${TARGET_DEVICE_PATH}" == ${TARGET_POOL}/encrypted-ds/vm-ds/* ]]; then
-            local ON_SOURCE="no"
-            for SOURCE_DEVICE_PATH in "${SOURCE_VM_PATH_LIST[@]}"; do
-                [[ "${SOURCE_DEVICE_PATH}" == "${TARGET_DEVICE_PATH}" ]] && ON_SOURCE="yes" && break
-            done
-
-            local USED_ELSEWHERE="no"
-            jq -e --arg VM "${VM}" --arg PATH "${TARGET_DEVICE_PATH}" '
-                .[] | select(.name!=$VM) | .devices
-                | to_entries[] | select(.value.attributes.path==$PATH)
-            ' <<< "${TARGET_ALL_VM_JSON}" >/dev/null && USED_ELSEWHERE="yes"
-
-            if [[ "${ON_SOURCE}" == "no" && "${USED_ELSEWHERE}" == "no" ]]; then
-                ORPHAN_NONZVOL_LIST+=( "${TARGET_DEVICE_PATH}" )
-            fi
-        fi
-    done
-
-    if [[ "${#ORPHAN_NONZVOL_LIST[@]}" -gt 0 ]]; then
-        echo "WARNING: VM '${VM}' has orphan non‑zvol paths in vm-ds:"
-        for TARGET_DEVICE_PATH in "${ORPHAN_NONZVOL_LIST[@]}"; do
-            echo "  Orphan path: ${TARGET_DEVICE_PATH}"
-        done
+        echo
     fi
 }
 
-# Rsync file-backed VM disks (qcow2/raw images) listed in VM definition (per VM, per file)
+# Rsync file-backed VM disks (qcow2/raw images) and ISOs (per VM, per file)
 function Rsync_vm_file_disks() {
     local SOURCE_LOCATION="$1"
     local VM="$2"
@@ -501,20 +455,24 @@ function Rsync_vm_file_disks() {
     local RSYNC_TARGET
 
     local RSYNCED=0
+    local FILE_DEVICE_LIST
+    local FILE_DEVICE
 
-    # Iterate over DISK devices in the source VM, carrying the device id
-    jq -r --arg VM "${VM}" '
+    # Collect RAW and CDROM devices (file-backed)
+    mapfile -t FILE_DEVICE_LIST < <(jq -r --arg VM "${VM}" '
         .[] | select(.name==$VM) | .devices[]
-        | select(.attributes.dtype=="DISK")
+        | select(.attributes.dtype=="RAW" or .attributes.dtype=="CDROM")
         | "\(.id) \(.attributes.path)"
-    ' <<< "${SOURCE_ALL_VM_JSON}" | while read -r DEV_ID SOURCE_PATH; do
+    ' <<< "${SOURCE_ALL_VM_JSON}")
 
-        # Only handle file-backed disks under /mnt/<POOL>/...
-        if [[ "${SOURCE_PATH}" == "/mnt/${SOURCE_POOL}/"* ]]; then
+    for FILE_DEVICE in "${FILE_DEVICE_LIST[@]}"; do
+        DEV_ID="${FILE_DEVICE%% *}"
+        SOURCE_PATH="${FILE_DEVICE#* }"
+
+        # Only rsync if the file is inside vm-ds
+        if [[ "${SOURCE_PATH}" == "/mnt/${SOURCE_POOL}/encrypted-ds/vm-ds/"* ]]; then
             # Must be a file
-            Execute_command "${SOURCE_LOCATION}" "test -f \"${SOURCE_PATH}\"" || {
-                continue
-            }
+            Execute_command "${SOURCE_LOCATION}" "test -f \"${SOURCE_PATH}\"" || continue
 
             # Find the corresponding target path by device id
             TARGET_PATH="$(jq -r --argjson DEV_ID "${DEV_ID}" '
@@ -551,8 +509,8 @@ function Rsync_vm_file_disks() {
                 || Background_error "ERROR: Failed to create target dir ${TARGET_PATH%/*} for VM '${VM}'"
 
             # Print general header once
-            if [[ $RSYNCED -eq 0 ]]; then
-                echo "Rsyncing file-backed disks for VM '${VM}'..."
+            if [[ ${RSYNCED} -eq 0 ]]; then
+                echo "Rsyncing file-backed disks/ISOs for VM '${VM}'..."
                 RSYNCED=1
             fi
 
@@ -566,6 +524,7 @@ function Rsync_vm_file_disks() {
             fi
         fi
     done
+    [[ ${RSYNCED} -eq 1 ]] && echo
 }
 
 # Replicate one VM’s datasets/zvols
@@ -583,42 +542,43 @@ function Verify_and_recreate_vm() {
     local VM="$2"
 
     local MISSING=()
+    local DISK_PATH_LIST
+    local DEVICE_LIST
 
-    # Verify all disks exist
-    while IFS= read -r DISK_PATH; do
+    # Verify all storage-bearing devices exist: DISK (zvol), RAW (file), CDROM (ISO)
+    mapfile -t DISK_PATH_LIST < <(jq -r '
+        .devices | to_entries[]
+        | select((.value.dtype // .value.attributes.dtype)=="DISK"
+              or (.value.dtype // .value.attributes.dtype)=="RAW"
+              or (.value.dtype // .value.attributes.dtype)=="CDROM")
+        | .value.attributes.path
+    ' "${TRANSFORMED_VM_JSON_FILE}")
+
+    for DISK_PATH in "${DISK_PATH_LIST[@]}"; do
         local REL_DISK_PATH=""
         if [[ "${DISK_PATH}" =~ ^/dev/zvol/ ]]; then
+            # DISK: ZVOL must exist on target
             REL_DISK_PATH="${DISK_PATH#/dev/zvol/}"   # pool/dataset/...
             Execute_command "${TARGET_LOCATION}" "zfs list -H \"${REL_DISK_PATH}\" &>/dev/null" \
                 || MISSING+=( "${REL_DISK_PATH}" )
 
         elif [[ "${DISK_PATH}" =~ ^/mnt/ ]]; then
-            # Normalize /mnt/<POOL>/... to POOL/...
-            REL_DISK_PATH="${DISK_PATH#/mnt/}"
-            if Execute_command "${TARGET_LOCATION}" "zfs list -H \"${REL_DISK_PATH}\" &>/dev/null"; then
-                :
-            elif Execute_command "${TARGET_LOCATION}" "test -f \"${DISK_PATH}\""; then
-                :
-            else
-                MISSING+=( "${DISK_PATH}" )
-            fi
+            # RAW/CDROM: any file path under /mnt must exist (replication handled elsewhere)
+            Execute_command "${TARGET_LOCATION}" "test -f \"${DISK_PATH}\"" \
+                || MISSING+=( "${DISK_PATH}" )
 
         else
+            # RAW: Raw block device path (e.g., /dev/sdX) or other: ensure block device exists locally
             if [[ -b "${DISK_PATH}" ]]; then
-                # raw block device exists
                 :
             else
                 MISSING+=( "${DISK_PATH}" )
             fi
         fi
-    done < <(jq -r '
-        .devices | to_entries[]
-        | select((.value.dtype // .value.attributes.dtype)=="DISK")
-        | .value.attributes.path
-    ' "${TRANSFORMED_VM_JSON_FILE}")
+    done
 
     if [[ "${#MISSING[@]}" -gt 0 ]]; then
-        echo "Failed to create VM '${VM}': missing zvols: ${MISSING[*]}"
+        echo "Failed to create VM '${VM}': missing storage: ${MISSING[*]}"
         echo
         return 1
     fi
@@ -639,26 +599,7 @@ function Verify_and_recreate_vm() {
     echo "  Created VM shell for '${VM}' with id=${VM_ID}"
 
     # Add devices one by one
-    while IFS= read -r DEVICE; do
-        local DTYPE ATTRS PAYLOAD
-        DTYPE="$(jq -r '.dtype' <<<"${DEVICE}")"
-        ATTRS="$(jq -c '.attributes' <<<"${DEVICE}")"
-
-        # Build payload with dtype inside attributes
-        PAYLOAD="$(jq -n \
-            --argjson attrs "${ATTRS}" \
-            --arg dtype "${DTYPE}" \
-            --argjson vm "${VM_ID}" \
-            '{vm: $vm|tonumber, attributes: ($attrs + {dtype: $dtype})}')"
-
-        echo -n "  Adding ${DTYPE} device... "
-        if Execute_command "${TARGET_LOCATION}" "midclt call vm.device.create '${PAYLOAD}' &>/dev/null"; then
-            echo "Ok."
-        else
-            echo "Failed."
-            return 1
-        fi
-    done < <(jq -c '
+    mapfile -t DEVICE_LIST < <(jq -c '
         .devices | to_entries[]
         | {
             dtype: (.value.dtype // .value.attributes.dtype),
@@ -668,6 +609,35 @@ function Verify_and_recreate_vm() {
             )
         }
     ' "${TRANSFORMED_VM_JSON_FILE}")
+
+    for DEVICE in "${DEVICE_LIST[@]}"; do
+        local DTYPE ATTRS PAYLOAD
+        DTYPE="$(jq -r '.dtype' <<<"${DEVICE}")"
+
+        if [[ "${DTYPE}" == "RAW" ]]; then
+            # RAW: build attributes and force exists:true
+            ATTRS="$(jq -c '.attributes | del(.exists) + {exists:true}' <<<"${DEVICE}")"
+        else
+            # All other types: just take attributes as-is
+            ATTRS="$(jq -c '.attributes' <<<"${DEVICE}")"
+        fi
+
+        PAYLOAD="$(jq -n \
+            --argjson attrs "${ATTRS}" \
+            --arg dtype "${DTYPE}" \
+            --argjson vm "${VM_ID}" \
+            '{vm: $vm|tonumber, attributes: ($attrs + {dtype: $dtype})}')"
+
+        echo -n "  Adding ${DTYPE} device... "
+        local CREATE_OUT
+        if CREATE_OUT="$(Execute_command "${TARGET_LOCATION}" \
+                "midclt call vm.device.create '${PAYLOAD}' 2>&1")"; then
+            echo "Done."
+        else
+            echo -e "Failed to add ${DTYPE} (path=$(jq -r '.path // empty' <<<"${ATTRS}"))\n\n${CREATE_OUT}\n"
+            return 1
+        fi
+    done
     echo
 }
 
@@ -694,6 +664,8 @@ function Perform_vm_replication() {
     local TRANSFORMED_VM_JSON_FILE
 
     local PROCESSED_VM_LIST=()
+    local VM_LIST_FROM_SOURCE
+    local VM
 
     echo "#########################################"
     echo "### Starting VM replication workflow  ###"
@@ -723,7 +695,8 @@ function Perform_vm_replication() {
     Extract_vm_definitions
 
     # === Loop through each source VM ===
-    while IFS= read -r VM; do
+    mapfile -t VM_LIST_FROM_SOURCE < <(jq -r '.[].name' <<< "${SOURCE_ALL_VM_JSON}")
+    for VM in "${VM_LIST_FROM_SOURCE[@]}"; do
         Vm_in_scope "SOURCE" "${VM}" || continue
         PROCESSED_VM_LIST+=("${VM}")
 
@@ -760,7 +733,7 @@ function Perform_vm_replication() {
         else
             ((FAILED++))
         fi
-    done < <(jq -r '.[].name' <<< "${SOURCE_ALL_VM_JSON}")
+    done
 
     # Post-loop: check if all requested VMs were actually processed
     if [[ "${#VM_LIST[@]}" -gt 0 ]]; then
