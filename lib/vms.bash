@@ -401,13 +401,14 @@ function Audit_and_cleanup_vm_storage() {
 
         # skip if not under encrypted-ds/vm-ds
         [[ "${TARGET_VM_PATH}" == *"/encrypted-ds/vm-ds/"* ]] || continue
-
+        
+        local SOURCE_VM_PATH="${TARGET_VM_PATH/${TARGET_POOL}/${SOURCE_POOL}}"
         case "${TARGET_VM_PATH}" in
             /mnt/*)
-                ! Execute_command "${SOURCE}" "test -f '${TARGET_VM_PATH/${TARGET_POOL}/${SOURCE_POOL}}'"                       && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
+                ! Execute_command "${SOURCE}" "test -f '${SOURCE_VM_PATH}'"                                 && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
                 ;;
             /dev/zvol/*)
-                ! Execute_command "${SOURCE}" "zfs list -H '${TARGET_VM_PATH/${TARGET_POOL}/${SOURCE_POOL}}' >/dev/null 2>&1"   && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
+                ! Execute_command "${SOURCE}" "zfs list -H '${SOURCE_VM_PATH#/dev/zvol/}' >/dev/null 2>&1"   && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
                 ;;
             *)
                 continue
