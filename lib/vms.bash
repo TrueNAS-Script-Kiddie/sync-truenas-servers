@@ -370,75 +370,71 @@ function Audit_and_cleanup_vm_storage() {
     local TARGET_LOCATION="$1"
     local VM="$2"
 
-    local -a SOURCE_VM_ZVOL_LIST
-    local -a TARGET_VM_ZVOL_LIST
     local -a SOURCE_VM_PATH_LIST
     local -a TARGET_VM_PATH_LIST
-
-    # Extract zvols for this VM on SOURCE
-    mapfile -t SOURCE_VM_ZVOL_LIST < <(jq -r --arg VM "${VM}" --arg POOL "${SOURCE_POOL}" '
-        .[] | select(.name==$VM) | .devices
-        | to_entries[] | select(.value.attributes.dtype=="DISK")
-        | .value.attributes.path
-        | select(startswith("/dev/zvol/" + $POOL + "/encrypted-ds/vm-ds/"))
-        | sub("^/dev/zvol/" + $POOL + "/encrypted-ds/vm-ds/"; "")
-    ' <<< "${SOURCE_ALL_VM_JSON}")
-
-    # Extract zvols for this VM on TARGET
-    mapfile -t TARGET_VM_ZVOL_LIST < <(jq -r --arg VM "${VM}" --arg POOL "${TARGET_POOL}" '
-        .[] | select(.name==$VM) | .devices
-        | to_entries[] | select(.value.attributes.dtype=="DISK")
-        | .value.attributes.path
-        | select(startswith("/dev/zvol/" + $POOL + "/encrypted-ds/vm-ds/"))
-        | sub("^/dev/zvol/" + $POOL + "/encrypted-ds/vm-ds/"; "")
-    ' <<< "${TARGET_ALL_VM_JSON}")
 
     # Extract all device paths (zvols and non‑zvols) for this VM on SOURCE
     mapfile -t SOURCE_VM_PATH_LIST < <(jq -r --arg VM "${VM}" '
         .[] | select(.name==$VM) | .devices
         | to_entries[] | .value.attributes.path
+        | select(. != null)
     ' <<< "${SOURCE_ALL_VM_JSON}")
 
     # Extract all device paths (zvols and non‑zvols) for this VM on TARGET
     mapfile -t TARGET_VM_PATH_LIST < <(jq -r --arg VM "${VM}" '
         .[] | select(.name==$VM) | .devices
         | to_entries[] | .value.attributes.path
+        | select(. != null)
     ' <<< "${TARGET_ALL_VM_JSON}")
 
-    # --- Orphan zvol cleanup ---
-    local ZVOL_REL_PATH
-    local ZVOL_FULL_PATH
-    local -a ORPHAN_ZVOL_LIST=()
+    local TARGET_VM_PATH
+    local REL_SOURCE_VM_PATH
+    local -a ORPHAN_PATH_LIST=()
+    for TARGET_VM_PATH in "${TARGET_VM_PATH_LIST[@]}"; do
+        # skip if target path is present in source (loop element‑wise, space‑safe)
+        for REL_SOURCE_VM_PATH in "${SOURCE_VM_PATH_LIST[@]#*/${SOURCE_POOL}/}"; do
+            [[ "${REL_SOURCE_VM_PATH}" == "${TARGET_VM_PATH#*/${TARGET_POOL}/}" ]] && continue 2   # jump to next TARGET_VM_PATH
+        done
 
-    for ZVOL_REL_PATH in "${TARGET_VM_ZVOL_LIST[@]}"; do
-        if [[ ! " ${SOURCE_VM_ZVOL_LIST[*]} " =~ " ${ZVOL_REL_PATH} " ]]; then
-            local REF_COUNT
-            REF_COUNT=$(jq -r --arg REL "${ZVOL_REL_PATH}" --arg POOL "${TARGET_POOL}" '
-                [ .[] | .devices
-                  | to_entries[]
-                  | select(.value.attributes.dtype=="DISK")
-                  | .value.attributes.path
-                  | select(startswith("/dev/zvol/" + $POOL + "/encrypted-ds/vm-ds/"))
-                  | sub("^/dev/zvol/" + $POOL + "/encrypted-ds/vm-ds/"; "")
-                  | select(.==$REL)
-                ] | length
-            ' <<< "${TARGET_ALL_VM_JSON}")
+        # skip if more than one VM on target references it
+        [[ "$(jq --arg TARGET_VM_PATH "${TARGET_VM_PATH}" '[ .[] | .devices | to_entries[] | select(.value.attributes.path==$TARGET_VM_PATH) ] | length' <<< "${TARGET_ALL_VM_JSON}")" -ne "1" ]] && continue
 
-            if [[ "${REF_COUNT}" -eq 1 ]]; then
-                ORPHAN_ZVOL_LIST+=( "${ZVOL_REL_PATH}" )
-            fi
-        fi
+        # skip if not under encrypted-ds/vm-ds
+        [[ "${TARGET_VM_PATH}" == *"/encrypted-ds/vm-ds/"* ]] || continue
+
+        case "${TARGET_VM_PATH}" in
+            /mnt/*)
+                ! Execute_command "${SOURCE}" "test -f '${TARGET_VM_PATH/${TARGET_POOL}/${SOURCE_POOL}}'"                       && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
+                ;;
+            /dev/zvol/*)
+                ! Execute_command "${SOURCE}" "zfs list -H '${TARGET_VM_PATH/${TARGET_POOL}/${SOURCE_POOL}}' >/dev/null 2>&1"   && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
+                ;;
+            *)
+                continue
+                ;;
+        esac
     done
 
-    if [[ "${#ORPHAN_ZVOL_LIST[@]}" -gt 0 ]]; then
-        echo "Cleaning up orphan zvols for VM '${VM}':"
-        for ZVOL_REL_PATH in "${ORPHAN_ZVOL_LIST[@]}"; do
-            ZVOL_FULL_PATH="${TARGET_POOL}/encrypted-ds/vm-ds/${ZVOL_REL_PATH}"
-            echo "  truenas-${TARGET_SERVER_ID} - zfs destroy -r ${ZVOL_FULL_PATH}${TEST_MODE:+" (Not done because of '--test' usage!)"}"
-            if [[ -z "${TEST_MODE}" ]]; then
-                Execute_command "${TARGET_LOCATION}" "zfs destroy -r \"${ZVOL_FULL_PATH}\"" \
-                    || Background_error "ERROR: Failed to destroy orphan zvol ${ZVOL_FULL_PATH}"
-            fi
+    local ORPHAN_PATH
+    if [[ "${#ORPHAN_PATH_LIST[@]}" -gt 0 ]]; then
+        echo "Cleaning up orphan paths for VM '${VM}':${TEST_MODE:+" (Not done because of '--test' usage!)"}"
+        for ORPHAN_PATH in "${ORPHAN_PATH_LIST[@]}"; do
+            case "${ORPHAN_PATH}" in
+                /mnt/*)
+                    echo "  truenas-${TARGET_SERVER_ID} - rm -f ${ORPHAN_PATH}"
+                    if [[ -z "${TEST_MODE}" ]]; then
+                        Execute_command "${TARGET_LOCATION}" "rm -f \"${ORPHAN_PATH}\"" \
+                            || Background_error "ERROR: Failed to remove orphan file '${ORPHAN_PATH}'"
+                    fi
+                    ;;
+                /dev/zvol/*)
+                    echo "  truenas-${TARGET_SERVER_ID} - zfs destroy -r ${ORPHAN_PATH#/dev/zvol/}"
+                    if [[ -z "${TEST_MODE}" ]]; then
+                        Execute_command "${TARGET_LOCATION}" "zfs destroy -r \"${ORPHAN_PATH#/dev/zvol/}\"" \
+                            || Background_error "ERROR: Failed to destroy orphan zvol '${ORPHAN_PATH#/dev/zvol/}'"
+                    fi
+                    ;;
+            esac
         done
         echo
     fi
