@@ -25,7 +25,7 @@ function Perform_zfs_rep() {
         elif [[ "${SCOPE}" == "vm_latest_snapshot_only" ]]; then
             ZFS_AUTOBACKUP_TASK_OPTARGS=" ${TASK_SCOPE} ${TARGET_PARENT_DATASET}"
 
-            echo "Performing ZFS Replication of the latest snapshot for the VM '${VM}'"
+            echo "Performing ZFS Replication of the latest snapshot for the VM '${VM}'${TEST_MODE:+" (Not done because of '--test' usage!)"}"
             ( IFS=", "; echo "  Following zvols are impacted: ${IMPACTED_DATASETS[*]}" )
             echo
         fi
@@ -56,7 +56,6 @@ function Perform_zfs_rep() {
                     "zfs get -H -o value type,mounted '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}' 2>/dev/null \
                      | paste -sd' ' - \
                      | grep -q '^filesystem[[:space:]]*${EXPECTED}\$'"; then
-                   # echo "  Executing $([[ -n \"${LOCAL_TARGET}\" ]] && echo locally || echo remotely): zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
                     echo "  truenas-${TARGET_SERVER_ID} - zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
                     Execute_command "${EXEC_MODE}" "zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
                     CHANGED="true"

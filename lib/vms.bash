@@ -331,7 +331,7 @@ function Tag_vm_disks() {
                     echo "Adding 'autobackup'-tag to the disks of the VM '${VM}'..."
                     TAGGED=1
                 fi
-                echo "  truenas-${SOURCE_SERVER_ID} - zfs set autobackup:${TASK_SCOPE}=true \"${ZFS_DISK_PATH}\"${TEST_MODE:+" (Not done because of '--test' usage!)"}"
+                echo "  truenas-${SOURCE_SERVER_ID} - zfs set autobackup:${TASK_SCOPE}=true \"${ZFS_DISK_PATH}\""
                 Execute_command "${SOURCE_LOCATION}" \
                     "zfs set autobackup:${TASK_SCOPE}=true \"${ZFS_DISK_PATH}\"" \
                     || Background_error "ERROR: Failed to tag ZVOL ${ZFS_DISK_PATH} for VM '${VM}'"
@@ -355,8 +355,8 @@ function Delete_vm_on_destination() {
 
     VM_ID="$(jq -r --arg VM "${VM}" '.[] | select(.name==$VM) | .id' <<< "${TARGET_ALL_VM_JSON}")"
     if [[ -n "${VM_ID}" && "${VM_ID}" != "null" ]]; then
-        echo "Deleting VM '${VM}' (id ${VM_ID}) on truenas-${TARGET_SERVER_ID}..."
-        echo "  truenas-${TARGET_SERVER_ID} - midclt call vm.delete ${VM_ID}${TEST_MODE:+" (Not done because of '--test' usage!)"}"
+        echo "Deleting VM '${VM}' (id ${VM_ID}) on truenas-${TARGET_SERVER_ID}...${TEST_MODE:+" (Not done because of '--test' usage!)"}"
+        echo "  truenas-${TARGET_SERVER_ID} - midclt call vm.delete ${VM_ID}"
         if [[ -z "${TEST_MODE}" ]]; then
             Execute_command "${TARGET_LOCATION}" "midclt call vm.delete ${VM_ID} >/dev/null 2>&1" \
                 || Background_error "ERROR: Failed to delete VM '${VM}' on truenas-${TARGET_SERVER_ID}"
@@ -393,12 +393,13 @@ function Audit_and_cleanup_vm_storage() {
         | sub("^/dev/zvol/" + $POOL + "/encrypted-ds/vm-ds/"; "")
     ' <<< "${TARGET_ALL_VM_JSON}")
 
-    # Extract all device paths (zvols and non‑zvols) for this VM
+    # Extract all device paths (zvols and non‑zvols) for this VM on SOURCE
     mapfile -t SOURCE_VM_PATH_LIST < <(jq -r --arg VM "${VM}" '
         .[] | select(.name==$VM) | .devices
         | to_entries[] | .value.attributes.path
     ' <<< "${SOURCE_ALL_VM_JSON}")
 
+    # Extract all device paths (zvols and non‑zvols) for this VM on TARGET
     mapfile -t TARGET_VM_PATH_LIST < <(jq -r --arg VM "${VM}" '
         .[] | select(.name==$VM) | .devices
         | to_entries[] | .value.attributes.path
@@ -510,7 +511,7 @@ function Rsync_vm_file_disks() {
 
             # Print general header once
             if [[ ${RSYNCED} -eq 0 ]]; then
-                echo "Rsyncing file-backed disks/ISOs for VM '${VM}'..."
+                echo "Rsyncing file-backed disks/ISOs for VM '${VM}'...${TEST_MODE:+" (Not done because of '--test' usage!)"}"
                 RSYNCED=1
             fi
 
@@ -584,12 +585,12 @@ function Verify_and_recreate_vm() {
     fi
 
     # Create the VM shell
-    echo "Creating VM '${VM}' on truenas-${TARGET_SERVER_ID} from json... "
+    echo "Creating VM '${VM}' on truenas-${TARGET_SERVER_ID} from json...${TEST_MODE:+" (Not done because of '--test' usage!)"} "
     local SHELL_JSON
     SHELL_JSON="$(jq -c 'del(.id, .status, .display_available, .devices)' "${TRANSFORMED_VM_JSON_FILE}")"
 
     local CREATE_OUT
-    if ! CREATE_OUT="$(Execute_command "${TARGET_LOCATION}" "midclt call vm.create '${SHELL_JSON}'")"; then
+    if ! CREATE_OUT="$(Execute_command "${TARGET_LOCATION}${TEST_MODE:+"_test"}" "midclt call vm.create '${SHELL_JSON}'")"; then
         echo "Failed."
         return 1
     fi
@@ -622,16 +623,17 @@ function Verify_and_recreate_vm() {
             ATTRS="$(jq -c '.attributes' <<<"${DEVICE}")"
         fi
 
-        PAYLOAD="$(jq -n \
-            --argjson attrs "${ATTRS}" \
-            --arg dtype "${DTYPE}" \
-            --argjson vm "${VM_ID}" \
-            '{vm: $vm|tonumber, attributes: ($attrs + {dtype: $dtype})}')"
+        if [[ -z "${TEST_MODE}" ]]; then
+            PAYLOAD="$(jq -n \
+                --argjson attrs "${ATTRS}" \
+                --arg dtype "${DTYPE}" \
+                --argjson vm "${VM_ID}" \
+                '{vm: $vm|tonumber, attributes: ($attrs + {dtype: $dtype})}')"
+        fi
 
         echo -n "  Adding ${DTYPE} device... "
         local CREATE_OUT
-        if CREATE_OUT="$(Execute_command "${TARGET_LOCATION}" \
-                "midclt call vm.device.create '${PAYLOAD}' 2>&1")"; then
+        if CREATE_OUT="$(Execute_command "${TARGET_LOCATION}${TEST_MODE:+"_test"}" "midclt call vm.device.create '${PAYLOAD}' 2>&1")"; then
             echo "Done."
         else
             echo -e "Failed to add ${DTYPE} (path=$(jq -r '.path // empty' <<<"${ATTRS}"))\n\n${CREATE_OUT}\n"
