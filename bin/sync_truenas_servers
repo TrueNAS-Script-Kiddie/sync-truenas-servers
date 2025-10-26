@@ -1,4 +1,5 @@
 #!/usr/bin/bash
+# bin/sync_truenas_servers
 
 # Resolve paths
 declare SCRIPT_FILENAME="$(basename "$0")"

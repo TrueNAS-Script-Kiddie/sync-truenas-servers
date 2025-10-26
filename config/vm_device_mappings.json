@@ -70,7 +70,7 @@
     ]
   },
   "DISPLAY": {
-    "_doc": "Rules apply to devices where attributes.dtype == NIC",
+    "_doc": "Rules apply to devices where attributes.dtype == DISPLAY",
     "port": [
       {
         "scope": null,
