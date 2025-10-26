@@ -68,5 +68,22 @@
         "backup": "ens6"
       }
     ]
+  },
+  "DISPLAY": {
+    "_doc": "Rules apply to devices where attributes.dtype == NIC",
+    "port": [
+      {
+        "scope": null,
+        "master": 5900,
+        "backup": 5905
+      }
+    ],
+    "web_port": [
+      {
+        "scope": null,
+        "master": 5901,
+        "backup": 5906
+      }
+    ]
   }
 }

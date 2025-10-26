@@ -140,8 +140,8 @@ function Transform_vm_definition() {
             | ($DEV.attributes[$ATTR] // empty) as $SOURCE_VALUE
             | ($SOURCE_VALUE | tostring) as $SOURCE_VALUES
             | ( ($RULE.scope == null) or ($SOURCE_VALUES | contains($RULE.scope)) ) as $SCOPE_MATCH
-            | ( $SOURCE_VALUES == ($RULE[$SOURCE_SERVER_ID] // "") ) as $SOURCE_EQUALS_RULE
-            | ( $SOURCE_VALUES | contains($RULE[$SOURCE_SERVER_ID] // "") ) as $SOURCE_CONTAINS_RULE
+            | ( $SOURCE_VALUES == ($RULE[$SOURCE_SERVER_ID] | tostring) ) as $SOURCE_EQUALS_RULE
+            | ( $SOURCE_VALUES | contains($RULE[$SOURCE_SERVER_ID] | tostring) ) as $SOURCE_CONTAINS_RULE
             | "  dtype=" + $DTYPE
             + " attribute=" + $ATTR
             + " source_value=" + ($SOURCE_VALUE|tostring)
@@ -187,10 +187,10 @@ function Transform_vm_definition() {
             | ($DEVICE.attributes[$ATTR] // empty) as $SOURCE_VALUE
             | ($SOURCE_VALUE | tostring) as $SOURCE_STR
             | if (($RULE.scope == null) or ($SOURCE_STR | contains($RULE.scope))) then
-                if ($SOURCE_STR == $RULE[$SOURCE_SERVER_ID]) then
+                if ($SOURCE_STR == ($RULE[$SOURCE_SERVER_ID]|tostring)) then
                   "\($DTYPE)\t\($ATTR)\t\($SOURCE_VALUE) → \($RULE[$TARGET_SERVER_ID])"
-                elif ($SOURCE_STR | contains($RULE[$SOURCE_SERVER_ID])) then
-                  "\($DTYPE)\t\($ATTR)\t\($SOURCE_VALUE) → \($SOURCE_STR | sub($RULE[$SOURCE_SERVER_ID]; $RULE[$TARGET_SERVER_ID]))"
+                elif ($SOURCE_STR | contains($RULE[$SOURCE_SERVER_ID]|tostring)) then
+                  "\($DTYPE)\t\($ATTR)\t\($SOURCE_VALUE) → \($SOURCE_STR | sub(($RULE[$SOURCE_SERVER_ID]|tostring); ($RULE[$TARGET_SERVER_ID]|tostring)))"
                 else empty end
               else empty end
         )
@@ -211,11 +211,12 @@ function Transform_vm_definition() {
                 | if $old == "" then .
                   else
                     ($old|tostring) as $olds
+                    | ($rule[$SOURCE_SERVER_ID]|tostring) as $src_rule
                     | if (($rule.scope == null) or ($olds|contains($rule.scope))) then
-                        if ($olds == $rule[$SOURCE_SERVER_ID]) then
+                        if ($olds == $src_rule) then
                           .attributes[$e.key] = $rule[$TARGET_SERVER_ID]
-                        elif ($olds|contains($rule[$SOURCE_SERVER_ID])) then
-                          .attributes[$e.key] = ($olds|sub($rule[$SOURCE_SERVER_ID];$rule[$TARGET_SERVER_ID]))
+                        elif ($olds|contains($src_rule)) then
+                          .attributes[$e.key] = ($olds|sub($src_rule; ($rule[$TARGET_SERVER_ID]|tostring)))
                         else .
                         end
                       else .
@@ -401,7 +402,7 @@ function Audit_and_cleanup_vm_storage() {
 
         # skip if not under encrypted-ds/vm-ds
         [[ "${TARGET_VM_PATH}" == *"/encrypted-ds/vm-ds/"* ]] || continue
-        
+
         local SOURCE_VM_PATH="${TARGET_VM_PATH/${TARGET_POOL}/${SOURCE_POOL}}"
         case "${TARGET_VM_PATH}" in
             /mnt/*)
