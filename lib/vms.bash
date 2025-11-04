@@ -125,33 +125,36 @@ function Transform_vm_definition() {
         jq -r --arg SOURCE_SERVER_ID "${SOURCE_SERVER_ID}" --arg TARGET_SERVER_ID "${TARGET_SERVER_ID}" --argfile MAP_FILE "${MAP_FILE}" '
         def DEVS: (.devices // (.[0].devices));
         DEVS[]
-        | . as $DEV
-        | $DEV.attributes.dtype as $DTYPE
-        | ($MAP_FILE[$DTYPE] // null) as $DMAP
+        | . as $DEVICE
+        | $DEVICE.attributes.dtype as $DTYPE
+        | ($MAP_FILE[$DTYPE] // null) as $DEVICE_MAP
         | "DEC: DTYPE=" + ($DTYPE // "null")
-            + " MAP_PRESENT=" + (((($DMAP|type) != "null"))|tostring)
+            + " MAP_PRESENT=" + (((($DEVICE_MAP|type) != "null"))|tostring)
         ,
-        ( if ($DMAP|type) != "null" then
-            $DMAP
+        ( if ($DEVICE_MAP|type) != "null" then
+            $DEVICE_MAP
             | to_entries[]
             | select(.key != "_doc")
             | .key as $ATTR
-            | .value[] as $RULE
-            | ($DEV.attributes[$ATTR] // empty) as $SOURCE_VALUE
+            | ($DEVICE.attributes[$ATTR] // "" ) as $SOURCE_VALUE
             | ($SOURCE_VALUE | tostring) as $SOURCE_VALUES
-            | ( ($RULE.scope == null) or ($SOURCE_VALUES | contains($RULE.scope)) ) as $SCOPE_MATCH
-            | ( $SOURCE_VALUES == ($RULE[$SOURCE_SERVER_ID] | tostring) ) as $SOURCE_EQUALS_RULE
-            | ( $SOURCE_VALUES | contains($RULE[$SOURCE_SERVER_ID] | tostring) ) as $SOURCE_CONTAINS_RULE
-            | "  dtype=" + $DTYPE
-            + " attribute=" + $ATTR
-            + " source_value=" + ($SOURCE_VALUE|tostring)
-            + " source_rule=" + (($RULE[$SOURCE_SERVER_ID] // "null")|tostring)
-            + " target_rule=" + (($RULE[$TARGET_SERVER_ID] // "null")|tostring)
-            + " scope=" + (($RULE.scope // "null")|tostring)
-            + " | scope_match=" + ($SCOPE_MATCH|tostring)
-            + " source_equals_rule=" + ($SOURCE_EQUALS_RULE|tostring)
-            + " source_contains_rule=" + ($SOURCE_CONTAINS_RULE|tostring)
-            + " apply=" + (( $SCOPE_MATCH and ( $SOURCE_EQUALS_RULE or $SOURCE_CONTAINS_RULE ) )|tostring)
+            | ( first(
+                  .value[]
+                  | . as $RULE_MATCH
+                  | ( ($RULE_MATCH.scope == null) or ($SOURCE_VALUES | contains($RULE_MATCH.scope)) ) as $SCOPE_MATCH
+                  | ( $SOURCE_VALUES == ($RULE_MATCH[$SOURCE_SERVER_ID] | tostring) ) as $SOURCE_EQUALS_RULE
+                  | ( $SOURCE_VALUES | contains($RULE_MATCH[$SOURCE_SERVER_ID] | tostring) ) as $SOURCE_CONTAINS_RULE
+                  | select( $SCOPE_MATCH and ( $SOURCE_EQUALS_RULE or $SOURCE_CONTAINS_RULE ) )
+              ) ) as $RULE_MATCH
+            | if $RULE_MATCH != null then
+                "  dtype=" + $DTYPE
+                + " attribute=" + $ATTR
+                + " source_value=" + ($SOURCE_VALUE|tostring)
+                + " source_rule=" + (($RULE_MATCH[$SOURCE_SERVER_ID] // "null")|tostring)
+                + " target_rule=" + (($RULE_MATCH[$TARGET_SERVER_ID] // "null")|tostring)
+                + " scope=" + (($RULE_MATCH.scope // "null")|tostring)
+                + " | apply=true"
+              else empty end
           else empty end )
         ' "${SOURCE_VM_JSON_FILE}"
     )
@@ -172,7 +175,7 @@ function Transform_vm_definition() {
         # no mapping rules for this dtype
         if $DTYPE == "DISK" then
             # warn if path not covered by any scope
-            ($DEVICE.attributes.path // empty) as $DISK_PATH
+            ($DEVICE.attributes.path // "" ) as $DISK_PATH
             | if (SCOPES | any($DISK_PATH | contains(.))) then empty
               else "WARNING\tpath\t\($DISK_PATH) → (no mapping rule)"
               end
@@ -183,14 +186,21 @@ function Transform_vm_definition() {
             | to_entries[]
             | select(.key != "_doc")
             | .key as $ATTR
-            | .value[] as $RULE
-            | ($DEVICE.attributes[$ATTR] // empty) as $SOURCE_VALUE
+            | ($DEVICE.attributes[$ATTR] // "" ) as $SOURCE_VALUE
             | ($SOURCE_VALUE | tostring) as $SOURCE_STR
-            | if (($RULE.scope == null) or ($SOURCE_STR | contains($RULE.scope))) then
-                if ($SOURCE_STR == ($RULE[$SOURCE_SERVER_ID]|tostring)) then
-                  "\($DTYPE)\t\($ATTR)\t\($SOURCE_VALUE) → \($RULE[$TARGET_SERVER_ID])"
-                elif ($SOURCE_STR | contains($RULE[$SOURCE_SERVER_ID]|tostring)) then
-                  "\($DTYPE)\t\($ATTR)\t\($SOURCE_VALUE) → \($SOURCE_STR | sub(($RULE[$SOURCE_SERVER_ID]|tostring); ($RULE[$TARGET_SERVER_ID]|tostring)))"
+            | ( first(
+                  .value[]
+                  | . as $RULE_MATCH
+                  | (($RULE_MATCH.scope == null) or ($SOURCE_STR | contains($RULE_MATCH.scope))) as $SCOPE_MATCH
+                  | ($SOURCE_STR == ($RULE_MATCH[$SOURCE_SERVER_ID]|tostring)) as $EQUALS
+                  | ($SOURCE_STR | contains($RULE_MATCH[$SOURCE_SERVER_ID]|tostring)) as $CONTAINS
+                  | select($SCOPE_MATCH and ($EQUALS or $CONTAINS))
+              ) ) as $RULE_MATCH
+            | if $RULE_MATCH != null then
+                if ($SOURCE_STR == ($RULE_MATCH[$SOURCE_SERVER_ID]|tostring)) then
+                  "\($DTYPE)\t\($ATTR)\t\($SOURCE_VALUE) → \($RULE_MATCH[$TARGET_SERVER_ID])"
+                elif ($SOURCE_STR | contains($RULE_MATCH[$SOURCE_SERVER_ID]|tostring)) then
+                  "\($DTYPE)\t\($ATTR)\t\($SOURCE_VALUE) → \($SOURCE_STR | sub(($RULE_MATCH[$SOURCE_SERVER_ID]|tostring); ($RULE_MATCH[$TARGET_SERVER_ID]|tostring)))"
                 else empty end
               else empty end
         )
@@ -199,37 +209,41 @@ function Transform_vm_definition() {
 
     # 3) Apply JSON mappings and write to $TRANSFORMED_VM_JSON_FILE
     jq --arg SOURCE_SERVER_ID "${SOURCE_SERVER_ID}" --arg TARGET_SERVER_ID "${TARGET_SERVER_ID}" --argfile MAP_FILE "${MAP_FILE}" '
-      def apply_device($dev):
-        $dev
-        | .attributes.dtype as $dtype
-        | ($MAP_FILE[$dtype] // null) as $dmap
-        | if ($dmap|type) == "null" then .
+      def apply_device($DEVICE):
+        $DEVICE
+        | .attributes.dtype as $DTYPE
+        | ($MAP_FILE[$DTYPE] // null) as $DEVICE_MAP
+        | if ($DEVICE_MAP|type) == "null" then .
           else
-            reduce ($dmap | to_entries[] | select(.key != "_doc")) as $e (.;
-              reduce ($e.value[]) as $rule (.;
-                (.attributes[$e.key] // empty) as $old
-                | if $old == "" then .
-                  else
-                    ($old|tostring) as $olds
-                    | ($rule[$SOURCE_SERVER_ID]|tostring) as $src_rule
-                    | if (($rule.scope == null) or ($olds|contains($rule.scope))) then
-                        if ($olds == $src_rule) then
-                          .attributes[$e.key] = $rule[$TARGET_SERVER_ID]
-                        elif ($olds|contains($src_rule)) then
-                          .attributes[$e.key] = ($olds|sub($src_rule; ($rule[$TARGET_SERVER_ID]|tostring)))
-                        else .
-                        end
-                      else .
-                      end
-                  end
-              )
+            reduce ($DEVICE_MAP | to_entries[] | select(.key != "_doc")) as $DEVICE_ENTRY (.;
+              (.attributes[$DEVICE_ENTRY.key] // "" ) as $OLD_VALUE
+              | ($OLD_VALUE | tostring) as $OLD_STR
+              | ( first(
+                    $DEVICE_ENTRY.value[]
+                    | . as $RULE_MATCH
+                    | ($RULE_MATCH[$SOURCE_SERVER_ID]|tostring) as $SRC_RULE
+                    | (($RULE_MATCH.scope == null) or ($OLD_STR | contains($RULE_MATCH.scope))) as $SCOPE_OK
+                    | ($OLD_STR == $SRC_RULE) as $EQUALS
+                    | ($OLD_STR | contains($SRC_RULE)) as $CONTAINS
+                    | select($SCOPE_OK and ($EQUALS or $CONTAINS))
+                ) ) as $MATCH
+              | if $MATCH != null then
+                  ($MATCH[$SOURCE_SERVER_ID]|tostring) as $SRC_RULE
+                  | if ($OLD_STR == $SRC_RULE) then
+                      .attributes[$DEVICE_ENTRY.key] = $MATCH[$TARGET_SERVER_ID]
+                    elif ($OLD_STR | contains($SRC_RULE)) then
+                      .attributes[$DEVICE_ENTRY.key] = ($OLD_STR | sub($SRC_RULE; ($MATCH[$TARGET_SERVER_ID]|tostring)))
+                    else .
+                    end
+                else .
+                end
             )
           end;
 
       if .devices then
-        .devices |= map(apply_device(.))
+        .devices |= [ .[] | (apply_device(.) // .) ]
       elif (type == "array") and (.[0].devices) then
-        .[0].devices |= map(apply_device(.))
+        .[0].devices |= [ .[0].devices[] | (apply_device(.) // .) ]
       else
         .
       end
@@ -667,9 +681,9 @@ function Perform_vm_replication() {
     local VM_LIST_FROM_SOURCE
     local VM
 
-    echo "#########################################"
-    echo "### Starting VM replication workflow  ###"
-    echo "#########################################"
+    echo "#################################"
+    echo "### Performing VM Replication ###"
+    echo "#################################"
     echo
 
     # Prepare vars
@@ -702,6 +716,7 @@ function Perform_vm_replication() {
 
         echo
         echo "### Replicating VM: ${VM} ###"
+        echo
 
         SOURCE_VM_JSON_FILE="${VM_TMP_DIR}/json/per_vm/${VM}.truenas-${SOURCE_SERVER_ID}.source.json"
         TARGET_VM_JSON_FILE="${VM_TMP_DIR}/json/per_vm/${VM}.truenas-${TARGET_SERVER_ID}.target.json"
@@ -745,6 +760,6 @@ function Perform_vm_replication() {
         done
     fi
 
-    echo "### Summary: ${SUCCEEDED} succeeded, ${FAILED} failed, ${NOTFOUND} not found ###"
+    echo "### VM Replication Summary: ${SUCCEEDED} succeeded, ${FAILED} failed, ${NOTFOUND} not found ###"
     echo
 }

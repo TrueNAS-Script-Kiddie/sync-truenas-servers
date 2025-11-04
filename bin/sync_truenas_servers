@@ -35,7 +35,7 @@ REMOTE_CMD=( ssh -F "${SSH_CONFIG_FILE}" "truenas-${REMOTE_SERVER_ID}" )
 # Globals (match existing script behavior)
 declare TASK
 declare PERFORM_ROLLUP
-declare PERFORM_RSYNC
+declare PERFORM_APP_REP
 declare PERFORM_VM_REP
 declare PERFORM_ZFS_REP_ALL
 declare PERFORM_ZFS_REP_LATEST
@@ -60,7 +60,6 @@ source "${SCRIPT_DIR}/../lib/cli.bash"
 source "${SCRIPT_DIR}/../lib/apps.bash"
 source "${SCRIPT_DIR}/../lib/docker.bash"
 source "${SCRIPT_DIR}/../lib/immich_db.bash"
-source "${SCRIPT_DIR}/../lib/rsync.bash"
 source "${SCRIPT_DIR}/../lib/zfs_rep.bash"
 source "${SCRIPT_DIR}/../lib/rollup.bash"
 source "${SCRIPT_DIR}/../lib/vms.bash"
@@ -84,7 +83,7 @@ if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
     echo "######################################################################"
     echo
 
-    [[ -n "${PERFORM_RSYNC}" ]]          && Perform_rsync
+    [[ -n "${PERFORM_APP_REP}" ]]        && Perform_rsync
     [[ -n "${PERFORM_VM_REP}" ]]         && Perform_vm_replication
     [[ -n "${PERFORM_ZFS_REP_ALL}" ]]    && Perform_zfs_rep all_snapshots
     [[ -n "${PERFORM_ROLLUP}" ]]         && Perform_rollup

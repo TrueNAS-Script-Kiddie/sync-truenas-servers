@@ -75,14 +75,14 @@
       {
         "scope": null,
         "master": 5900,
-        "backup": 5905
+        "backup": 5950
       }
     ],
     "web_port": [
       {
         "scope": null,
         "master": 5901,
-        "backup": 5906
+        "backup": 5951
       }
     ]
   }

@@ -7,7 +7,7 @@ function Help() {
     echo
     echo -e "${SCRIPT_FILENAME} [-h] [--help]\t\t\t\tDisplays this help message."
     echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>] [--vm=<name>*]"
-    echo -e "\t\t\t\t\t\t\t\tPerforms the requested sync."
+    echo -e "\t\t\t\t\t\t\t\tPerforms the requested replication."
     echo
     echo -e "--test"
     echo -e "\tThis option forces the script not change anything. It does stop/start containers."
@@ -21,8 +21,8 @@ function Help() {
     echo -e "backup_to_master\t\t\t\t\t\tPerform a sync from the TrueNAS-Backup server to the TrueNAS-Master server (= restore)."
     echo
     echo "Allowed subtasks:"
-    echo -e "all\t\t\t\t\t\t\t\tPerform rsync, ZFS replication and snapshot rollup. This is the default."
-    echo -e "rsync\t\t\t\t\t\t\t\tPerform rsync."
+    echo -e "all\t\t\t\t\t\t\t\tPerform Application, VM and ZFS Replication / Snapshot Rollup. This is the default."
+    echo -e "app_replication\t\t\t\t\t\t\tPerform Application Replication."
     echo -e "vm_replication\t\t\t\t\t\t\tPerform VM replication."
     echo -e "zfs_replication\t\t\t\t\t\t\tPerform ZFS replication (includes snapshot rollup)."
     echo -e "zfs_replication_without_snapshot_rollup\t\t\t\tPerform ZFS replication without snapshot rollup."
@@ -32,8 +32,8 @@ function Help() {
     echo -e "snapshot_rollup\t\t\t\t\t\t\tPerform snapshot rollup (doesn't sync any data)."
     echo
     echo "Allowed apps:"
-    echo -e "immich\t\t\t\t\t\t\t\tLimit the rsync subtask to only copy Immich."
-    echo -e "plex\t\t\t\t\t\t\t\tLimit the rsync subtask to only copy Plex."
+    echo -e "immich\t\t\t\t\t\t\t\tLimit the Application Replication subtask to only copy Immich."
+    echo -e "plex\t\t\t\t\t\t\t\tLimit the Application Replication subtask to only copy Plex."
     echo
 
     exit 0
@@ -45,13 +45,6 @@ function Process_command_line_options() {
             echo "ERROR: You may only choose 1 task!"
             exit 1
         fi
-    }
-
-    function l_Subtask_precheck() {
-            if [[ -n "${PERFORM_ROLLUP}" || -n "${PERFORM_RSYNC}" || -n "${PERFORM_ZFS_REP_ALL}" || -n "${PERFORM_ZFS_REP_LATEST}" ]]; then
-                echo "ERROR: You may only choose 1 subtask!"
-                exit 1
-            fi
     }
 
     local OPTION
@@ -75,46 +68,39 @@ function Process_command_line_options() {
             TASK="backup_to_master"
             ;;
         --subtask=all)
-            l_Subtask_precheck
             PERFORM_ROLLUP="true"
-            PERFORM_RSYNC="true"
+            PERFORM_APP_REP="true"
+            PERFORM_VM_REP="true"
             PERFORM_ZFS_REP_ALL="true"
             PERFORM_ZFS_REP_LATEST="true"
+            PERFORM_ROLLUP="true"
             ;;
-        --subtask=rsync)
-            l_Subtask_precheck
-            PERFORM_RSYNC="true"
+        --subtask=app_replication)
+            PERFORM_APP_REP="true"
             ;;
         --subtask=vm_replication)
-            l_Subtask_precheck
             PERFORM_VM_REP="true"
             ;;
         --subtask=zfs_replication)
-            l_Subtask_precheck
             PERFORM_ZFS_REP_ALL="true"
             PERFORM_ZFS_REP_LATEST="true"
             PERFORM_ROLLUP="true"
             ;;
         --subtask=zfs_replication_without_snapshot_rollup)
-            l_Subtask_precheck
             PERFORM_ZFS_REP_ALL="true"
             PERFORM_ZFS_REP_LATEST="true"
             ;;
         --subtask=zfs_replication_with_all_snapshots)
-            l_Subtask_precheck
             PERFORM_ZFS_REP_ALL="true"
             PERFORM_ROLLUP="true"
             ;;
         --subtask=zfs_replication_with_all_snapshots_without_snapshot_rollup)
-            l_Subtask_precheck
             PERFORM_ZFS_REP_ALL="true"
             ;;
         --subtask=zfs_replication_with_latest_snapshot)
-            l_Subtask_precheck
             PERFORM_ZFS_REP_LATEST="true"
             ;;
         --subtask=snapshot_rollup)
-            l_Subtask_precheck
             PERFORM_ROLLUP="true"
             ;;
         --app=plex)
@@ -144,9 +130,9 @@ function Process_command_line_options() {
     [[ -z "${TASK}" ]] && Help
 
     # When no subtask is specified, then all subtasks are enabled by default
-    if [[ -z "${PERFORM_ROLLUP}" && -z "${PERFORM_RSYNC}" && -z "${PERFORM_VM_REP}" && -z "${PERFORM_ZFS_REP_ALL}" && -z "${PERFORM_ZFS_REP_LATEST}" ]]; then
+    if [[ -z "${PERFORM_ROLLUP}" && -z "${PERFORM_APP_REP}" && -z "${PERFORM_VM_REP}" && -z "${PERFORM_ZFS_REP_ALL}" && -z "${PERFORM_ZFS_REP_LATEST}" ]]; then
         PERFORM_ROLLUP="true"
-        PERFORM_RSYNC="true"
+        PERFORM_APP_REP="true"
         PERFORM_VM_REP="true"
         PERFORM_ZFS_REP_ALL="true"
         PERFORM_ZFS_REP_LATEST="true"
