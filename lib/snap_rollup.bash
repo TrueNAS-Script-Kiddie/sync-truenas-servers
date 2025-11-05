@@ -2,7 +2,7 @@
 # lib/rollup.bash
 # ZFS snapshot rollup orchestration
 
-function Perform_rollup() {
+function Perform_snapshot_rollup() {
     local EXEC_MODE
 
     echo "######################################"

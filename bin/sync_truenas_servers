@@ -57,12 +57,12 @@ declare -a VM_LIST=()                         # empty means “all VMs”
 # Source modules
 source "${SCRIPT_DIR}/../lib/common.bash"
 source "${SCRIPT_DIR}/../lib/cli.bash"
-source "${SCRIPT_DIR}/../lib/apps.bash"
+source "${SCRIPT_DIR}/../lib/rep_apps.bash"
 source "${SCRIPT_DIR}/../lib/docker.bash"
 source "${SCRIPT_DIR}/../lib/immich_db.bash"
-source "${SCRIPT_DIR}/../lib/zfs_rep.bash"
-source "${SCRIPT_DIR}/../lib/rollup.bash"
-source "${SCRIPT_DIR}/../lib/vms.bash"
+source "${SCRIPT_DIR}/../lib/rep_filesystems.bash"
+source "${SCRIPT_DIR}/../lib/snap_rollup.bash"
+source "${SCRIPT_DIR}/../lib/rep_vms.bash"
 
 # Entry
 Process_command_line_options "$@"
@@ -83,11 +83,11 @@ if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
     echo "######################################################################"
     echo
 
-    [[ -n "${PERFORM_APP_REP}" ]]        && Perform_rsync
+    [[ -n "${PERFORM_APP_REP}" ]]        && Perform_app_replication
     [[ -n "${PERFORM_VM_REP}" ]]         && Perform_vm_replication
-    [[ -n "${PERFORM_ZFS_REP_ALL}" ]]    && Perform_zfs_rep all_snapshots
-    [[ -n "${PERFORM_ROLLUP}" ]]         && Perform_rollup
-    [[ -n "${PERFORM_ZFS_REP_LATEST}" ]] && Perform_zfs_rep latest_snapshot_only
+    [[ -n "${PERFORM_ZFS_REP_ALL}" ]]    && Perform_filesystem_replication all_snapshots
+    [[ -n "${PERFORM_ROLLUP}" ]]         && Perform_snapshot_rollup
+    [[ -n "${PERFORM_ZFS_REP_LATEST}" ]] && Perform_filesystem_replication latest_snapshot_only
 
     echo "################################################################################"
     echo "################################################################################"

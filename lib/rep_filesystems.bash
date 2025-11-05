@@ -1,8 +1,8 @@
 #!/usr/bin/bash
-# lib/zfs_rep.bash
-# ZFS replication orchestration
+# lib/rep_filesystems.bash
+# TrueNAS Filesystem Replication Orchestration
 
-function Perform_zfs_rep() {
+function Perform_filesystem_replication() {
     function l_Print_scope() {
         if [[ "${SCOPE}" == "all_snapshots" ]]; then
             ZFS_AUTOBACKUP_TASK_OPTARGS="--other-snapshots ${TASK_SCOPE} ${TARGET_PARENT_DATASET}"

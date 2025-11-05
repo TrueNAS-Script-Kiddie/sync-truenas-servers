@@ -1,6 +1,6 @@
 #!/usr/bin/bash
-# lib/apps.bash
-# Application Replication
+# lib/rep_apps.bash
+# TrueNAS Application Replication Orchestration
 
 function Control_app() {
     local FULL_APP_NAME="$1"
@@ -68,7 +68,7 @@ function Control_app_with_checks() {
     fi
 }
 
-function Perform_rsync() {
+function Perform_app_replication() {
     local -a LOCATIONS_LIST=( "local" "remote" )
     local -a PLEX_FOLDERS_TO_RSYNC_LIST=( "Media" "Metadata" "Plug-ins" "Plug-in Support" )
     local -a IMMICH_FOLDERS_TO_RSYNC_LIST=( "backups" "encoded-video" "library" "profile" "thumbs" "upload" )

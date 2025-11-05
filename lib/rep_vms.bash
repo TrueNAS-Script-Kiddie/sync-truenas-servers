@@ -1,6 +1,6 @@
 #!/usr/bin/bash
-# lib/vms.bash
-# Virtual Machine replication orchestration
+# lib/rep_vms.bash
+# TrueNAS VM replication Orchestration
 
 # Workspace
 VM_TMP_DIR="${SCRIPT_DIR}/../tmp/vms"
@@ -546,7 +546,7 @@ function Replicate_vm() {
     local VM="$2"
 
     # Scope your replication runner to this VM only.
-    Perform_zfs_rep "vm_latest_snapshot_only" "fast"
+    Perform_filesystem_replication "vm_latest_snapshot_only" "fast"
 }
 
 # Verify zvols exist and recreate VM on destination
