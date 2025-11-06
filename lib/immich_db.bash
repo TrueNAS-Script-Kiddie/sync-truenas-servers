@@ -3,39 +3,34 @@
 # Immich PostgreSQL DB backup and restore functions
 
 function Backup_immich_DB() {
-    local LOCATION="$1"
-    local SERVER_ID="$2"
-
-    local POOL_NAME="$(Resolve_pool "${SERVER_ID}" "fast")"
-
     echo "### Making a backup of the Immich Postgres DB ###"
     echo
 
     # Dynamically find container names
-    local CONTAINERS_TO_STOP=( $(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SERVER_ID}-(server|machine-learning|redis|permissions)-[0-9]+'") )
-    local CONTAINERS_TO_START=( $(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SERVER_ID}-pgvecto-[0-9]+'") )
+    local CONTAINERS_TO_STOP=( $(Execute_command "${SOURCE_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SOURCE_SERVER_ID}-(server|machine-learning|redis|permissions)-[0-9]+'") )
+    local CONTAINERS_TO_START=( $(Execute_command "${SOURCE_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SOURCE_SERVER_ID}-pgvecto-[0-9]+'") )
 
     # Make sure Immich is running
-    if [[ "$(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.name==\"immich-${SERVER_ID}\") | .state'")" != "RUNNING" ]]; then
+    if [[ "$(Execute_command "${SOURCE_LOCATION}" "midclt call app.query | jq -r '.[] | select(.name==\"immich-${SOURCE_SERVER_ID}\") | .state'")" != "RUNNING" ]]; then
         Background_error "ERROR: To backup the Immich DB, it must be in a running state."
     else
         echo "Immich app is running, proceeding..."
     fi
 
     # Stop the containers
-    Control_docker_containers "${LOCATION}" "stop" "${CONTAINERS_TO_STOP[@]}"
+    Control_docker_containers "${SOURCE_LOCATION}" "stop" "${CONTAINERS_TO_STOP[@]}"
 
     # Start the required container
-    Control_docker_containers "${LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
+    Control_docker_containers "${SOURCE_LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
 
     # Backup the Postgres DB
-    echo "Making a backup of the Immich DB to /mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz and moving it from immich-pgdata-ds to immich-data-ds/backups"
-    echo "Executing on TrueNAS-${SERVER_ID^}: docker exec -i "${CONTAINERS_TO_START[0]}" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/data/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
-    echo "Executing on TrueNAS-${SERVER_ID^}: mv \"/mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\""
+    echo "Making a backup of the Immich DB to /mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz and moving it from immich-pgdata-ds to immich-data-ds/backups"
+    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: docker exec -i "${CONTAINERS_TO_START[0]}" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/data/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
+    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\""
     if [[ -z "${TEST_MODE}" ]]; then
-        Execute_command "${LOCATION}" "docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/data/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
+        Execute_command "${SOURCE_LOCATION}" "docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/data/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
         [[ "$?" != "0" ]] && Background_error "ERROR: DB backup failed."
-        Execute_command "${LOCATION}" "mv \"/mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\""
+        Execute_command "${SOURCE_LOCATION}" "mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\""
         [[ "$?" != "0" ]] && Background_error "ERROR: DB move failed."
     fi
     echo
@@ -45,8 +40,7 @@ function Backup_immich_DB() {
 
 function Restore_immich_DB() {
     function Wait_for_pg_ready() {
-        local LOCATION="$1"
-        local CONTAINER_NAME="$2"
+        local CONTAINER_NAME="$1"
         local START_TIME="$(date +%s)"
         local TIMEOUT=60 # Timeout in seconds
         local PG_READY_OUTPUT
@@ -55,7 +49,7 @@ function Restore_immich_DB() {
 
         echo -n "Waiting for PostgreSQL in container ${CONTAINER_NAME} to be started completely"
         while true; do
-        PG_READY_OUTPUT=$(Execute_command "${LOCATION}" "docker exec -i \"${CONTAINER_NAME}\" bash -c 'pg_isready'")
+        PG_READY_OUTPUT=$(Execute_command "${TARGET_LOCATION}" "docker exec -i \"${CONTAINER_NAME}\" bash -c 'pg_isready'")
         if [[ "$PG_READY_OUTPUT" == *"accepting connections"* ]]; then
             echo " Start complete."
             break
@@ -72,48 +66,43 @@ function Restore_immich_DB() {
         done
     }
 
-    local LOCATION="$1"
-    local SERVER_ID="$2"
-
-    local POOL_NAME="$(Resolve_pool "${SERVER_ID}" "fast")"
-
     echo "### Restoring the Immich Postgres DB from backup ###"
     echo
 
     # Dynamically find container names
-    local CONTAINERS_TO_STOP=($(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SERVER_ID}-(server|machine-learning|redis|permissions|pgvecto)-[0-9]+'"))
-    local CONTAINERS_TO_START=( $(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SERVER_ID}-pgvecto-[0-9]+'") )
+    local CONTAINERS_TO_STOP=($(Execute_command "${TARGET_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${TARGET_SERVER_ID}-(server|machine-learning|redis|permissions|pgvecto)-[0-9]+'"))
+    local CONTAINERS_TO_START=( $(Execute_command "${TARGET_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${TARGET_SERVER_ID}-pgvecto-[0-9]+'") )
 
     # Stop the containers
-    Control_docker_containers "${LOCATION}" "stop" "${CONTAINERS_TO_STOP[@]}"
+    Control_docker_containers "${TARGET_LOCATION}" "stop" "${CONTAINERS_TO_STOP[@]}"
 
     # Remove existing Postgres DB
     echo "Removing the existing Immich DB before restoring the backup to it."
-    echo "Executing on TrueNAS-${SERVER_ID^}: rm -rf \"/mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/\"*"
+    echo "Executing on TrueNAS-${TARGET_SERVER_ID^}: rm -rf \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/\"*"
     [[ -z "${TEST_MODE}" ]] && \
-        Execute_command "${LOCATION}" "rm -rf \"/mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/\"*"
+        Execute_command "${TARGET_LOCATION}" "rm -rf \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/\"*"
 
     # Start Postgres DB
-    Control_docker_containers "${LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
+    Control_docker_containers "${TARGET_LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
 
-    Wait_for_pg_ready "${LOCATION}" "${CONTAINERS_TO_START[0]}"
+    Wait_for_pg_ready "${CONTAINERS_TO_START[0]}"
     sleep 2
 
     # Restore Postgres DB from backup
-    echo "Restoring of the Immich DB from /mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz"
-    echo "Executing on TrueNAS-${SERVER_ID^}: gunzip < \"/mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\" | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich"
+    echo "Restoring of the Immich DB from /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz"
+    echo "Executing on TrueNAS-${TARGET_SERVER_ID^}: gunzip < \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\" | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich"
     if [[ -z "${TEST_MODE}" ]]; then
-        Execute_command "${LOCATION}" "gunzip < /mnt/${POOL_NAME}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich --host=localhost" >"${DB_RESTORE_LOG}" 2>&1
+        Execute_command "${TARGET_LOCATION}" "gunzip < /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich --host=localhost" >"${DB_RESTORE_LOG}" 2>&1
         [[ "$?" != "0" ]] && Background_error "ERROR: DB restore failed. Check ${DB_RESTORE_LOG} for more details."
     fi
 
     # Stop Immich completely
     echo -n "Stopping the Immich application completely."
-    Control_app "immich-${SERVER_ID}" "stop" "${LOCATION}"
+    Control_app "immich-${TARGET_SERVER_ID}" "stop" "${TARGET_LOCATION}"
 
     # Start Immich completely
     echo -n "Starting the Immich application."
-    Control_app "immich-${SERVER_ID}" "start" "${LOCATION}"
+    Control_app "immich-${TARGET_SERVER_ID}" "start" "${TARGET_LOCATION}"
 
     echo
     echo "### Restoring the Immich Postgres DB from backup has completed successfully ###"

@@ -51,7 +51,7 @@ declare REMOTE_SOURCE
 declare LOCAL_TARGET
 declare REMOTE_TARGET
 
-declare -a APP_LIST=( "plex" "immich" )
+declare -a APP_LIST=()                        # empty means “all Apps
 declare -a VM_LIST=()                         # empty means “all VMs”
 
 # Source modules

@@ -66,7 +66,7 @@ function Extract_vm_definitions() {
     # Remove old jsons
     rm -f "${VM_TMP_DIR}/json/per_vm/"*.json 2>/dev/null
 
-    for SOURCE_OR_TARGET in SOURCE TARGET; do
+    for SOURCE_OR_TARGET in "SOURCE" "TARGET"; do
         local LOCATION SERVER_ID_VAR SERVER_ID ALL_VM_JSON
         local -n SOURCE_OR_TARGET_ALL_VM_JSON_REF="${SOURCE_OR_TARGET}_ALL_VM_JSON"
         local VM_NAMES
@@ -420,10 +420,10 @@ function Audit_and_cleanup_vm_storage() {
         local SOURCE_VM_PATH="${TARGET_VM_PATH/${TARGET_POOL}/${SOURCE_POOL}}"
         case "${TARGET_VM_PATH}" in
             /mnt/*)
-                ! Execute_command "${SOURCE}" "test -f '${SOURCE_VM_PATH}'"                                 && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
+                ! Execute_command "${SOURCE_LOCATION}" "test -f '${SOURCE_VM_PATH}'"                                 && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
                 ;;
             /dev/zvol/*)
-                ! Execute_command "${SOURCE}" "zfs list -H '${SOURCE_VM_PATH#/dev/zvol/}' >/dev/null 2>&1"   && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
+                ! Execute_command "${SOURCE_LOCATION}" "zfs list -H '${SOURCE_VM_PATH#/dev/zvol/}' >/dev/null 2>&1"   && ORPHAN_PATH_LIST+=( "${TARGET_VM_PATH}" )
                 ;;
             *)
                 continue
@@ -518,7 +518,7 @@ function Rsync_vm_file_disks() {
             esac
 
             # Ensure target directory exists
-            Execute_command "${TARGET}" "mkdir -p \"${TARGET_PATH%/*}\"" \
+            Execute_command "${TARGET_LOCATION}" "mkdir -p \"${TARGET_PATH%/*}\"" \
                 || Background_error "ERROR: Failed to create target dir ${TARGET_PATH%/*} for VM '${VM}'"
 
             # Print general header once
@@ -660,12 +660,10 @@ function Verify_and_recreate_vm() {
 #######################################
 
 function Perform_vm_replication() {
-    local SOURCE
-    local TARGET
-
+    local SOURCE_LOCATION
+    local TARGET_LOCATION
     local SOURCE_POOL
     local TARGET_POOL
-
     local SOURCE_SERVER_ID
     local TARGET_SERVER_ID
 
@@ -687,22 +685,19 @@ function Perform_vm_replication() {
     echo
 
     # Prepare vars
-    [[ -n "${LOCAL_SOURCE}" ]] && SOURCE="local" || SOURCE="remote"
-    [[ -n "${LOCAL_TARGET}" ]] && TARGET="local" || TARGET="remote"
+    [[ -n "${LOCAL_SOURCE}" ]] && SOURCE_LOCATION="local" || SOURCE_LOCATION="remote"
+    [[ -n "${LOCAL_TARGET}" ]] && TARGET_LOCATION="local" || TARGET_LOCATION="remote"
 
-    if [[ "${SOURCE}" == "local" ]]; then
+    if [[ "${SOURCE_LOCATION}" == "local" ]]; then
         SOURCE_POOL="$(Resolve_pool "${LOCAL_SERVER_ID}" "fast")"
         SOURCE_SERVER_ID="${LOCAL_SERVER_ID}"
+        TARGET_POOL="$(Resolve_pool "${REMOTE_SERVER_ID}" "fast")"
+        TARGET_SERVER_ID="${REMOTE_SERVER_ID}"
     else
         SOURCE_POOL="$(Resolve_pool "${REMOTE_SERVER_ID}" "fast")"
         SOURCE_SERVER_ID="${REMOTE_SERVER_ID}"
-    fi
-    if [[ "${TARGET}" == "local" ]]; then
         TARGET_POOL="$(Resolve_pool "${LOCAL_SERVER_ID}" "fast")"
         TARGET_SERVER_ID="${LOCAL_SERVER_ID}"
-    else
-        TARGET_POOL="$(Resolve_pool "${REMOTE_SERVER_ID}" "fast")"
-        TARGET_SERVER_ID="${REMOTE_SERVER_ID}"
     fi
 
     # Extract VM definitions into JSONs
@@ -735,15 +730,15 @@ function Perform_vm_replication() {
         fi
 
         Transform_vm_definition "${SOURCE_SERVER_ID}" "${TARGET_SERVER_ID}"
-        Cleanup_vm_disk_tags "${SOURCE}"
-        Tag_vm_disks "${SOURCE}" "${VM}"
-        Delete_vm_on_destination "${TARGET}" "${VM}"
-        Audit_and_cleanup_vm_storage "${TARGET}" "${VM}"
-        Rsync_vm_file_disks "${SOURCE}" "${VM}"
-        Replicate_vm "${SOURCE}" "${VM}"
-        Cleanup_vm_disk_tags "${SOURCE}"
+        Cleanup_vm_disk_tags "${SOURCE_LOCATION}"
+        Tag_vm_disks "${SOURCE_LOCATION}" "${VM}"
+        Delete_vm_on_destination "${TARGET_LOCATION}" "${VM}"
+        Audit_and_cleanup_vm_storage "${TARGET_LOCATION}" "${VM}"
+        Rsync_vm_file_disks "${SOURCE_LOCATION}" "${VM}"
+        Replicate_vm "${SOURCE_LOCATION}" "${VM}"
+        Cleanup_vm_disk_tags "${SOURCE_LOCATION}"
 
-        if Verify_and_recreate_vm "${TARGET}" "${VM}"; then
+        if Verify_and_recreate_vm "${TARGET_LOCATION}" "${VM}"; then
             ((SUCCEEDED++))
         else
             ((FAILED++))

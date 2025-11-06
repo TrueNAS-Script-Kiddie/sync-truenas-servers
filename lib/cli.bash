@@ -103,14 +103,11 @@ function Process_command_line_options() {
         --subtask=snapshot_rollup)
             PERFORM_ROLLUP="true"
             ;;
-        --app=plex)
-            APP_LIST+=( "plex" )
-            ;;
-        --app=immich)
-            APP_LIST+=( "immich" )
+        --app=*)
+            [[ ! " ${APP_LIST[*]} " =~ " ${OPTION#--app=} " ]] && APP_LIST+=( "${OPTION#--app=}" )
             ;;
         --vm=*)
-            VM_LIST+=( "${OPTION#--vm=}" )
+            [[ ! " ${VM_LIST[*]} " =~ " ${OPTION#--vm=} " ]] && VM_LIST+=( "${OPTION#--vm=}" )
             ;;
         --running_in_background)
             RUNNING_IN_BACKGROUND="true"
@@ -144,6 +141,13 @@ function Process_command_line_options() {
         exit 1
     fi
     
+    # --app is only allowed if $PERFORM_APP_REP=true
+    if [[ "${#APP_LIST[@]}" -gt 0 && -z "${PERFORM_APP_REP}" ]]; then
+        echo "ERROR: --app can only be used when the app_replication subtask is enabled."
+        exit 1
+    fi
+    
+
     # Define source and target
     case "${TASK}:${LOCAL_SERVER_ID}" in
         backup_to_master:master) REMOTE_SOURCE="backup"; LOCAL_TARGET="master" ;;

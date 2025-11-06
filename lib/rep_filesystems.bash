@@ -34,7 +34,7 @@ function Perform_filesystem_replication() {
     function l_Execute_replication_and_remount() {
         local IMPACTED_DATASET
         local ZFS_AUTOBACKUP_COMMAND="autobackup-venv/bin/python -m zfs_autobackup.ZfsAutobackup"
-        local ZFS_AUTOBACKUP_FOLDER="${SCRIPT_DIR}/../../zfs_autobackup"
+        local ZFS_AUTOBACKUP_PATH="${SCRIPT_DIR}/../../zfs_autobackup"
         local EXEC_MODE
         local -a UNMOUNTED_LIST=()
 
@@ -71,7 +71,7 @@ function Perform_filesystem_replication() {
         l_Toggle_mounts "umount" "${IMPACTED_DATASETS[@]}"
 
         # --- Run zfs_autobackup ---
-        cd "${ZFS_AUTOBACKUP_FOLDER}" || Background_error "ERROR: Cannot cd into ${ZFS_AUTOBACKUP_FOLDER}"
+        cd "${ZFS_AUTOBACKUP_PATH}" || Background_error "ERROR: Cannot cd into ${ZFS_AUTOBACKUP_PATH}"
         echo "  ${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}"
         if ${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}; then
             echo "  ZFS Replication completed successfully"

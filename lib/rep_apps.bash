@@ -27,137 +27,172 @@ function Control_app() {
 function Control_app_with_checks() {
     local APP_NAME="$1"
     local ACTION="$2"
-    local LOCATION="$3"
+    shift 2
+    local LOCATIONS=( "$@" )
 
-    local PERFORM_ACTION=0
+    local LOCATION
+    local SERVER_ID_VAR
+    local STOPPED_LIST_VAR
+    local FULL_APP_NAME
     local APP_STATE
+    local -a STOPPED_LIST
+    local PERFORM_ACTION=0
 
-    local SERVER_ID_VAR="${LOCATION^^}_SERVER_ID"
-    local STOPPED_LIST_VAR="${LOCATION^^}_STOPPED_LIST[@]"
+    for LOCATION in "${LOCATIONS[@]}"; do
+        SERVER_ID_VAR="${LOCATION^^}_SERVER_ID"
+        STOPPED_LIST_VAR="${LOCATION^^}_STOPPED_LIST[@]"
+        FULL_APP_NAME="${APP_NAME}-${!SERVER_ID_VAR}"
+        STOPPED_LIST=( "${!STOPPED_LIST_VAR}" )
 
-    local FULL_APP_NAME="${APP_NAME}-${!SERVER_ID_VAR}"
-    local -a STOPPED_LIST=( "${!STOPPED_LIST_VAR}" )
+        APP_STATE="$(Execute_command "${LOCATION}" \
+            "midclt call app.query | jq -r '.[] | select(.name==\"${FULL_APP_NAME}\") | .state'")"
 
-    APP_STATE="$(Execute_command "${LOCATION}" "midclt call app.query | jq -r '.[] | select(.name==\"${FULL_APP_NAME}\") | .state'")"
+        PERFORM_ACTION=0
+        case "${ACTION}" in
+          start)
+            if [[ ! "${APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
+                echo "WARNING: ${FULL_APP_NAME} cannot be started because its state is not 'STOPPED' or 'CRASHED'. It is ${APP_STATE}."
+            elif [[ " ${STOPPED_LIST[@]} " =~ " ${APP_NAME} " ]]; then
+                PERFORM_ACTION=1
+                echo -n "Starting ${LOCATION} ${FULL_APP_NAME} again, as it was also active before."
+            fi
+            ;;
+          stop)
+            if [[ ! "${APP_STATE}" =~ ^(RUNNING|DEPLOYING|CRASHED)$ ]]; then
+                echo "WARNING: ${FULL_APP_NAME} cannot be stopped because its state is not 'RUNNING', 'DEPLOYING' or 'CRASHED'. It is ${APP_STATE}."
+            else
+                PERFORM_ACTION=1
+                echo -n "Stopping ${LOCATION} ${FULL_APP_NAME}"
+            fi
+            ;;
+          *)
+            Background_error "Invalid action: ${ACTION}"
+            ;;
+        esac
 
-    case "${ACTION}" in
-      start)
-        if [[ ! "${APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
-            echo "WARNING: ${FULL_APP_NAME} cannot be started because its state is not 'STOPPED' or 'CRASHED'. It is ${APP_STATE}."
-        elif [[ " ${STOPPED_LIST[@]} " =~ " ${APP_NAME} " ]]; then
-            PERFORM_ACTION=1
-            echo -n "Starting ${LOCATION} ${FULL_APP_NAME} again, as it was also active before."
+        if (( PERFORM_ACTION )); then
+            Control_app "${FULL_APP_NAME}" "${ACTION}" "${LOCATION}"
+            [[ "${ACTION}" == "stop" ]] && eval "${LOCATION^^}_STOPPED_LIST+=( \"${APP_NAME}\" )"
         fi
-        ;;
-      stop)
-        if [[ ! "${APP_STATE}" =~ ^(RUNNING|DEPLOYING|CRASHED)$ ]]; then
-            echo "WARNING: ${FULL_APP_NAME} cannot be stopped because its state is not 'RUNNING', 'DEPLOYING' or 'CRASHED'. It is ${APP_STATE}."
-        else
-            PERFORM_ACTION=1
-            echo -n "Stopping ${LOCATION} ${FULL_APP_NAME}"
-        fi
-        ;;
-      *)
-        Background_error "Invalid action: ${ACTION}"
-        ;;
-    esac
-
-    if (( PERFORM_ACTION )); then
-        Control_app "${FULL_APP_NAME}" "${ACTION}" "${LOCATION}"
-        [[ "${ACTION}" == "stop" ]] && eval "${LOCATION^^}_STOPPED_LIST+=( \"${APP_NAME}\" )"
-    fi
+    done
 }
 
 function Perform_app_replication() {
-    local -a LOCATIONS_LIST=( "local" "remote" )
-    local -a PLEX_FOLDERS_TO_RSYNC_LIST=( "Media" "Metadata" "Plug-ins" "Plug-in Support" )
-    local -a IMMICH_FOLDERS_TO_RSYNC_LIST=( "backups" "encoded-video" "library" "profile" "thumbs" "upload" )
-    local PLEX_PATH="/mnt/POOL_TO_INSERT/encrypted-ds/app-ds/plex-ds/Library/Application Support/Plex Media Server"
-    local IMMICH_PATH="/mnt/POOL_TO_INSERT/encrypted-ds/app-ds/immich-ds/immich-data-ds"
+    local SOURCE_LOCATION
+    local TARGET_LOCATION
+    local SOURCE_POOL
+    local TARGET_POOL
+    local SOURCE_SERVER_ID
+    local TARGET_SERVER_ID
 
-    local LOCAL_SOURCE_POOL="$(Resolve_pool "${LOCAL_SOURCE}" "fast")"
-    local REMOTE_SOURCE_POOL="$(Resolve_pool "${REMOTE_SOURCE}" "fast")"
-    local LOCAL_TARGET_POOL="$(Resolve_pool "${LOCAL_TARGET}" "fast")"
-    local REMOTE_TARGET_POOL="$(Resolve_pool "${REMOTE_TARGET}" "fast")"
+    local FOUND
 
+    local -a SELECTED_APP_JSON_LIST
+    local -a APP_JSON_LIST
     local APP_NAME
-    local -a REMOTE_STOPPED_LIST LOCAL_STOPPED_LIST
-    local APP_PATH_VAR APP_PATH
-    local LOCATION
-    local SOURCE_PATH TARGET_PATH
-    local -a FOLDERS_TO_RSYNC_LIST 
-    local FOLDER_TO_RSYNC
-    local FULL_PATH
+    local JSON_APP_NAME
+    local APP_JSON
+
+    local -a REMOTE_STOPPED_LIST 
+    local -a LOCAL_STOPPED_LIST
+    local FULL_SOURCE_PATH
+    local FULL_TARGET_PATH
+    local -a APP_DIRS_TO_RSYNC_LIST
+    local APP_DIR_TO_RSYNC
+
+    # Prepare vars
+    [[ -n "${LOCAL_SOURCE}" ]] && SOURCE_LOCATION="local" || SOURCE_LOCATION="remote"
+    [[ -n "${LOCAL_TARGET}" ]] && TARGET_LOCATION="local" || TARGET_LOCATION="remote"
+
+    if [[ "${SOURCE_LOCATION}" == "local" ]]; then
+        SOURCE_POOL="$(Resolve_pool "${LOCAL_SERVER_ID}" "fast")"
+        SOURCE_SERVER_ID="${LOCAL_SERVER_ID}"
+        TARGET_POOL="$(Resolve_pool "${REMOTE_SERVER_ID}" "fast")"
+        TARGET_SERVER_ID="${REMOTE_SERVER_ID}"
+    else
+        SOURCE_POOL="$(Resolve_pool "${REMOTE_SERVER_ID}" "fast")"
+        SOURCE_SERVER_ID="${REMOTE_SERVER_ID}"
+        TARGET_POOL="$(Resolve_pool "${LOCAL_SERVER_ID}" "fast")"
+        TARGET_SERVER_ID="${LOCAL_SERVER_ID}"
+    fi
 
     echo "##########################################"
     echo "### Performing Application Replication ###"
     echo "##########################################"
     echo
 
-    for APP_NAME in "${APP_LIST[@]}"; do
+    mapfile -t APP_JSON_LIST < <(jq -c '.apps[]' "${SCRIPT_DIR}/../config/apps.json")
+    if [[ ${#APP_LIST[@]} -eq 0 ]]; then
+        # No --app specified → select all
+        SELECTED_APP_JSON_LIST=("${APP_JSON_LIST[@]}")
+    else
+        # Filter only requested apps
+        for APP_NAME in "${APP_LIST[@]}"; do
+            FOUND="false"
+            for APP_JSON in "${APP_JSON_LIST[@]}"; do
+                JSON_APP_NAME="$(jq -r '.name' <<< "${APP_JSON}")"
+                if [[ "${JSON_APP_NAME}" == "${APP_NAME}" ]]; then
+                    SELECTED_APP_JSON_LIST+=("${APP_JSON}")
+                    FOUND="true"
+                    break
+                fi
+            done
+            if [[ "${FOUND}" == "false" ]]; then
+                echo "ERROR: Requested app '${APP_NAME}' not found in config/apps.json"
+                exit 1
+            fi
+        done
+    fi
+
+    for APP_JSON in "${SELECTED_APP_JSON_LIST[@]}"; do
         REMOTE_STOPPED_LIST=()
         LOCAL_STOPPED_LIST=()
 
-        APP_PATH_VAR="${APP_NAME^^}_PATH"
-        APP_PATH="${!APP_PATH_VAR}"
+        APP_NAME="$(jq -r '.name' <<< "${APP_JSON}")"
+        mapfile -t APP_DIRS_TO_RSYNC_LIST < <(jq -r '.app_dir_list[]' <<< "${APP_JSON}")
+
+        # Prepare the rsyncs 
+        FULL_SOURCE_PATH="$([[ "${SOURCE_LOCATION}" == "remote" ]] && echo "truenas-${SOURCE_SERVER_ID}:")/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/$(jq -r '.app_base_path' <<< "${APP_JSON}")"
+        FULL_TARGET_PATH="$([[ "${TARGET_LOCATION}" == "remote" ]] && echo "truenas-${TARGET_SERVER_ID}:")/mnt/${TARGET_POOL}/encrypted-ds/app-ds/$(jq -r '.app_base_path' <<< "${APP_JSON}")"
 
         # Check if local and remote application datasets are available
-        ! Execute_command local "test -d \"${APP_PATH/POOL_TO_INSERT/${LOCAL_SOURCE_POOL}${LOCAL_TARGET_POOL}}\"" \
-            && Background_error "ERROR: '${APP_PATH/POOL_TO_INSERT/${LOCAL_SOURCE_POOL}${LOCAL_TARGET_POOL}}' does not exist. Is the dataset mounted and unlocked?"
-        ! Execute_command remote "test -d \"${APP_PATH/POOL_TO_INSERT/${REMOTE_SOURCE_POOL}${REMOTE_TARGET_POOL}}\"" \
-            && Background_error "ERROR: 'truenas-${REMOTE_SERVER_ID}:${APP_PATH/POOL_TO_INSERT/${REMOTE_SOURCE_POOL}${REMOTE_TARGET_POOL}}' does not exist. Is the dataset mounted and unlocked?"
+        Execute_command "${SOURCE_LOCATION}" "test -d \"${FULL_SOURCE_PATH#*:}\"" \
+            || Background_error "ERROR: '${FULL_SOURCE_PATH}' does not exist. Is the dataset mounted and unlocked?"
+        Execute_command "${TARGET_LOCATION}" "test -d \"${FULL_TARGET_PATH#*:}\"" \
+            || Background_error "ERROR: '${FULL_TARGET_PATH}' does not exist. Is the dataset mounted and unlocked?"
 
-        # Backup Immich Postgres DB
-        [[ "${APP_NAME}" == "immich" ]] && Backup_immich_DB "$([[ -n "${LOCAL_SOURCE_POOL}" ]] && echo "local" || echo "remote")" ${LOCAL_SOURCE}${REMOTE_SOURCE}
+        # # Perform pre-action function from the json (for example: Backup Immich Postgres DB)
+        PRE_ACTION="$(jq -r '.pre_action // empty' <<< "${APP_JSON}")"
+        [[ -n "${PRE_ACTION}" ]] && "$PRE_ACTION"
 
         # Stop the application locally and remotely
-        for LOCATION in "${LOCATIONS_LIST[@]}"; do
-            Control_app_with_checks ${APP_NAME} stop ${LOCATION}
-        done
+        Control_app_with_checks "${APP_NAME}" stop "local" "remote"
         echo
 
-        # Prepare the rsyncs
-        if [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "master" ]] || \
-           [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "backup" ]]; then
-            SOURCE_PATH="truenas-${REMOTE_SERVER_ID}:${APP_PATH/POOL_TO_INSERT/${REMOTE_SOURCE_POOL}}"
-            TARGET_PATH="${APP_PATH/POOL_TO_INSERT/${LOCAL_TARGET_POOL}}"
-        elif [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "backup" ]] || \
-             [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "master" ]]; then
-            SOURCE_PATH="${APP_PATH/POOL_TO_INSERT/${LOCAL_SOURCE_POOL}}"
-            TARGET_PATH="truenas-${REMOTE_SERVER_ID}:${APP_PATH/POOL_TO_INSERT/${REMOTE_TARGET_POOL}}"
-        fi
-
-        eval "local -a FOLDERS_TO_RSYNC_LIST=( \"\${${APP_NAME^^}_FOLDERS_TO_RSYNC_LIST[@]}\" )"
-        for FOLDER_TO_RSYNC in "${FOLDERS_TO_RSYNC_LIST[@]}"; do
+        for APP_DIR_TO_RSYNC in "${APP_DIRS_TO_RSYNC_LIST[@]}"; do
             # Check if the source and target directories exist
-            for FULL_PATH in "${SOURCE_PATH}" "${TARGET_PATH}"; do
-                if [[ "${FULL_PATH}" == *:* ]]; then
-                    Execute_command remote "test -d \"${FULL_PATH#*:}/${FOLDER_TO_RSYNC}\"" \
-                        || Background_error "ERROR: '${FULL_PATH}/${FOLDER_TO_RSYNC}' does not exist. Is the dataset mounted and unlocked?"
-                else
-                    Execute_command local "test -d \"${FULL_PATH#*:}/${FOLDER_TO_RSYNC}\"" \
-                        || Background_error "ERROR: '${FULL_PATH}/${FOLDER_TO_RSYNC}' does not exist. Is the dataset mounted and unlocked?"
-                fi
-            done
+            Execute_command "${SOURCE_LOCATION}" "test -d \"${FULL_SOURCE_PATH#*:}/${APP_DIR_TO_RSYNC}\"" \
+                || Background_error "ERROR: '${FULL_SOURCE_PATH}/${APP_DIR_TO_RSYNC}' does not exist. Is the application properly installed?"
+            Execute_command "${TARGET_LOCATION}" "test -d \"${FULL_TARGET_PATH#*:}/${APP_DIR_TO_RSYNC}\"" \
+                || Background_error "ERROR: '${FULL_TARGET_PATH}/${APP_DIR_TO_RSYNC}' does not exist. Is the application properly installed?"
 
             # Perform the rsyncs
-            echo "rsync ${TEST_MODE:+--dry-run} -e \"ssh -F ${SSH_CONFIG_FILE}\" --delete -aHX \"${SOURCE_PATH}/${FOLDER_TO_RSYNC}/\" \"${TARGET_PATH}/${FOLDER_TO_RSYNC}/\""
-            if rsync ${TEST_MODE:+--dry-run} -e "ssh -F ${SSH_CONFIG_FILE}" --delete -aHX "${SOURCE_PATH}/${FOLDER_TO_RSYNC}/" "${TARGET_PATH}/${FOLDER_TO_RSYNC}/"; then
-                echo "Rsync of '${FOLDER_TO_RSYNC}' completed successfully"
+            echo "rsync ${TEST_MODE:+--dry-run} -e \"ssh -F ${SSH_CONFIG_FILE}\" --delete -aHX \"${FULL_SOURCE_PATH}/${APP_DIR_TO_RSYNC}/\" \"${FULL_TARGET_PATH}/${APP_DIR_TO_RSYNC}/\""
+            if rsync ${TEST_MODE:+--dry-run} -e "ssh -F ${SSH_CONFIG_FILE}" --delete -aHX "${FULL_SOURCE_PATH}/${APP_DIR_TO_RSYNC}/" "${FULL_TARGET_PATH}/${APP_DIR_TO_RSYNC}/"; then
+                echo "Rsync of '${APP_DIR_TO_RSYNC}' completed successfully"
             else
-                Background_error "ERROR: Rsync of '${FOLDER_TO_RSYNC}' failed"
+                Background_error "ERROR: Rsync of '${APP_DIR_TO_RSYNC}' failed"
             fi
             echo
         done
 
         # Start the application locally and remotely if they were stopped
-        for LOCATION in "${LOCATIONS_LIST[@]}"; do
-            Control_app_with_checks ${APP_NAME} start ${LOCATION}
-        done
+        Control_app_with_checks "${APP_NAME}" start "local" "remote"
         echo
 
-        # Restore Immich Postgres DB
-        [[ "${APP_NAME}" == "immich" ]] && Restore_immich_DB "$([[ -n "${LOCAL_TARGET_POOL}" ]] && echo "local" || echo "remote")" ${LOCAL_TARGET}${REMOTE_TARGET}
+        # Perform post-action function from the json (for example: Restore Immich Postgres DB)
+        POST_ACTION="$(jq -r '.post_action // empty' <<< "${APP_JSON}")"
+        [[ -n "${POST_ACTION}" ]] && "$POST_ACTION"
     done
 
     echo "### Performing Application Replication completed ###"

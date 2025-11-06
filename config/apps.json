@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "plex",
+      "app_base_path": "plex-ds/Library/Application Support/Plex Media Server",
+      "app_dir_list": [
+        "Media",
+        "Metadata",
+        "Plug-ins",
+        "Plug-in Support"
+      ]
+    },
+    {
+      "name": "immich",
+      "app_base_path": "immich-ds/immich-data-ds",
+      "app_dir_list": [
+        "backups",
+        "encoded-video",
+        "library",
+        "profile",
+        "thumbs",
+        "upload"
+      ],
+      "pre_action": "Backup_immich_DB",
+      "post_action": "Restore_immich_DB"
+    }
+  ]
+}
