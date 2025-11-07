@@ -67,11 +67,12 @@ function Extract_vm_definitions() {
     rm -f "${VM_TMP_DIR}/json/per_vm/"*.json 2>/dev/null
 
     for SOURCE_OR_TARGET in "SOURCE" "TARGET"; do
-        local LOCATION SERVER_ID_VAR SERVER_ID ALL_VM_JSON
+        local LOCATION_VAR LOCATION SERVER_ID_VAR SERVER_ID ALL_VM_JSON
         local -n SOURCE_OR_TARGET_ALL_VM_JSON_REF="${SOURCE_OR_TARGET}_ALL_VM_JSON"
         local VM_NAMES
 
-        LOCATION="${!SOURCE_OR_TARGET}"
+        LOCATION_VAR="${SOURCE_OR_TARGET}_LOCATION"
+        LOCATION="${!LOCATION_VAR}"
         SERVER_ID_VAR="${LOCATION^^}_SERVER_ID"
         SERVER_ID="${!SERVER_ID_VAR}"
 
