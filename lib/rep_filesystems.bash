@@ -45,6 +45,7 @@ function Perform_filesystem_replication() {
 
             local EXPECTED
             local CHANGED="false"
+            local TARGET_SERVER_ID="$([[ -n "${LOCAL_SOURCE}" ]] && echo "${REMOTE_SERVER_ID}" || echo "${LOCAL_SERVER_ID}")"
 
             case "${ACTION}" in
                 "mount")  EXPECTED="no" ;;
