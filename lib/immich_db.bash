@@ -62,7 +62,7 @@ function Restore_immich_DB() {
             Background_error "ERROR: Timeout waiting for PostgreSQL in container ${CONTAINER_NAME} to be ready. Current status: ${PG_READY_OUTPUT}."
             break
         fi
-        sleep 1
+        sleep 5
         done
     }
 
