@@ -25,10 +25,10 @@ function Backup_immich_DB() {
 
     # Backup the Postgres DB
     echo "Making a backup of the Immich DB to /mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz and moving it from immich-pgdata-ds to immich-data-ds/backups"
-    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: docker exec -i "${CONTAINERS_TO_START[0]}" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/data/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
+    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: docker exec -i "${CONTAINERS_TO_START[0]}" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
     echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\""
     if [[ -z "${TEST_MODE}" ]]; then
-        Execute_command "${SOURCE_LOCATION}" "docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/data/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
+        Execute_command "${SOURCE_LOCATION}" "docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
         [[ "$?" != "0" ]] && Background_error "ERROR: DB backup failed."
         Execute_command "${SOURCE_LOCATION}" "mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\""
         [[ "$?" != "0" ]] && Background_error "ERROR: DB move failed."
