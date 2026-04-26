@@ -1,3 +1,4 @@
 config.local.bash
 logs/
 tmp/
+.claude/settings.local.json
