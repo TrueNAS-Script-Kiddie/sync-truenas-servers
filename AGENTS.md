@@ -1,7 +1,7 @@
 # sync_truenas_servers
 
 ## Project overview
-Bash-based replication orchestrator for a pair of TrueNAS SCALE servers (`truenas-master` ⇄ `truenas-backup`). A single entry script coordinates four replication subtasks between the pair: TrueNAS Apps (rsync + app stop/start via `midclt`), VMs (JSON-driven definition transform + zvol replication), ZFS filesystems (via `zfs_autobackup`), and snapshot rollup (via external `zfs-rollup`). Must run as `root`; logs go to `logs/` and run-state JSON to `tmp/vms/`.
+Bash-based replication orchestrator for a pair of TrueNAS SCALE servers (`truenas-master` ⇄ `truenas-backup`) running in a **dual-active** topology — both hosts have the same apps/VMs installed independently and may run simultaneously, so replication syncs *content* between two live instances rather than priming a cold standby. A single entry script coordinates four replication subtasks: TrueNAS Apps (rsync + app stop/start via `midclt`), VMs (JSON-driven definition transform + zvol replication), ZFS filesystems (via `zfs_autobackup`), and snapshot rollup (via external `zfs-rollup`). Must run as `root`; logs go to `logs/` and run-state JSON to `tmp/vms/`.
 
 ## Tech stack
 - Bash 5 (scripts are `#!/usr/bin/bash`)

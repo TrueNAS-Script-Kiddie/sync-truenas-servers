@@ -30,6 +30,11 @@ Because the working script re-execs itself under `nohup ... | tail -f`, a plain 
 2. Wrap direct local side effects in `[[ -z "${TEST_MODE}" ]] && ...` (see `lib/immich_db.bash`).
 `rsync` uses `${TEST_MODE:+--dry-run}` in `rep_apps.bash`. `zfs_autobackup` uses `${TEST_MODE:+ --test}` in `rep_filesystems.bash`.
 
+## Dual-active app topology
+Both servers run the same apps independently and may be active simultaneously (so `truenas-backup` is a live peer, not a cold standby). Two consequences for app replication:
+1. **`app_dir_list` in `apps.json` is a contract, not a convenience.** It separates *shared content* (synced) from *per-instance identity/state* (never synced) — e.g. for Plex, `Cache`, `Logs`, `Crash Reports`, and `Preferences.xml` (server GUID, plex.tv claim) are deliberately omitted; copying them would make both servers fight over the same external identity. Do not broaden the list without checking what identity files live in the siblings.
+2. **The DB dump path is load-bearing.** Immich's Postgres lives in a separate dataset (`immich-pgdata-ds`) that is *not* in `app_dir_list`. `Backup_immich_DB` writes the dump to `immich-pgdata-ds/` then moves it into `immich-data-ds/backups/` specifically because `backups` *is* in `app_dir_list` — the dump piggybacks on the existing rsync. If you change either path, the restore on the target side will silently find no dump.
+
 ## Per-app naming convention
 Apps are deployed as `<app>-<server_id>` (e.g. `immich-master`, `immich-backup`). `Control_app_with_checks` builds the full name via `${APP_NAME}-${!SERVER_ID_VAR}` using indirect expansion on `LOCAL_SERVER_ID` / `REMOTE_SERVER_ID`. Container names follow `<app>-<server_id>-<component>-<N>` and are discovered dynamically with `docker ps ... | grep -E`.
 
