@@ -9,6 +9,7 @@ declare LOG_DIR="${SCRIPT_DIR}/../logs"
 [[ ! -d "${LOG_DIR}" ]] && mkdir -p "${LOG_DIR}"
 
 if [[ -f "${SCRIPT_DIR}/../config/config.local.bash" ]]; then
+    # shellcheck source=config/config.example.bash
     source "${SCRIPT_DIR}/../config/config.local.bash"
 else
     echo "ERROR: No config found. Expected config.local.bash in ../config"
@@ -51,17 +52,25 @@ declare REMOTE_SOURCE
 declare LOCAL_TARGET
 declare REMOTE_TARGET
 
-declare -a APP_LIST=()                        # empty means “all Apps
+declare -a APP_LIST=()                        # empty means “all Apps"
 declare -a VM_LIST=()                         # empty means “all VMs”
 
 # Source modules
+# shellcheck source=lib/common.bash
 source "${SCRIPT_DIR}/../lib/common.bash"
+# shellcheck source=lib/cli.bash
 source "${SCRIPT_DIR}/../lib/cli.bash"
+# shellcheck source=lib/rep_apps.bash
 source "${SCRIPT_DIR}/../lib/rep_apps.bash"
+# shellcheck source=lib/docker.bash
 source "${SCRIPT_DIR}/../lib/docker.bash"
+# shellcheck source=lib/immich_db.bash
 source "${SCRIPT_DIR}/../lib/immich_db.bash"
+# shellcheck source=lib/rep_filesystems.bash
 source "${SCRIPT_DIR}/../lib/rep_filesystems.bash"
+# shellcheck source=lib/snap_rollup.bash
 source "${SCRIPT_DIR}/../lib/snap_rollup.bash"
+# shellcheck source=lib/rep_vms.bash
 source "${SCRIPT_DIR}/../lib/rep_vms.bash"
 
 # Entry
