@@ -11,15 +11,12 @@ Bash-based replication orchestrator for a pair of TrueNAS SCALE servers (`truena
 - Docker CLI for low-level Immich Postgres container control
 - `sendmail` for completion email
 
-External repos expected as siblings of this project (referenced via `${SCRIPT_DIR}/../../`):
-- `../zfs_autobackup/` — contains `autobackup-venv/bin/python` and the `zfs_autobackup` module
-- `../zfs-rollup/rollup.py`
+## External repos
+`zfs_autobackup` and `zfs-rollup` are **third-party tools** (not authored in this project) — public git repos that this project drives as external dependencies. They are expected as siblings of this project (referenced via `${SCRIPT_DIR}/../../`):
+- `../zfs_autobackup/` — ZFS snapshot/replication tool driven by dataset `autobackup:<task>` properties (see `.claude/rules/architectural_patterns.md`); contains `autobackup-venv/bin/python` and the `zfs_autobackup` module.
+- `../zfs-rollup/` — snapshot pruning/consolidation tool, invoked post-replication via `rollup.py`.
 
-## Related repos
-`zfs_autobackup` and `zfs-rollup` are **third-party tools** (not authored in this project) — public git repos that this project drives as external dependencies. Locally they're cloned to `C:\Apps\zfs_autobackup` and `C:\Apps\zfs-rollup` as their own VS Code projects, SFTP-synced to the same sibling layout on the TrueNAS host (see "External repos" above). When behavior needs verifying beyond what's summarized here, read the source directly at those paths rather than guessing from usage in `lib/`.
-- The local clones are what's actually deployed and may lag the upstream repo — that's expected; treat the local copy as the version of record for understanding current behavior, not the latest upstream.
-- `zfs_autobackup` — ZFS snapshot/replication tool driven by dataset `autobackup:<task>` properties (see `.claude/rules/architectural_patterns.md`).
-- `zfs-rollup` — snapshot pruning/consolidation tool, invoked post-replication via `rollup.py`.
+Locally they're cloned to `C:\Apps\zfs_autobackup` and `C:\Apps\zfs-rollup` as their own VS Code projects, SFTP-synced to the same sibling layout on the TrueNAS host. When behavior needs verifying beyond what's summarized here, read the source directly at those paths rather than guessing from usage in `lib/`. The local clones are what's actually deployed and may lag the upstream repo — that's expected; treat the local copy as the version of record for understanding current behavior, not the latest upstream.
 
 ## Key directories
 - [bin/sync_truenas_servers](bin/sync_truenas_servers) — entry point. Resolves paths, sources config + all `lib/` modules, re-execs itself with `--running_in_background` via `nohup`, dispatches subtasks, emails log.
