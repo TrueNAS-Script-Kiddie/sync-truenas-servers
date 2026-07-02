@@ -186,11 +186,14 @@ its real defect). Do not attempt this without host access.
   uses the first IFS char) — either accept and change IFS to `','`, or use
   `printf` if you want `", "`.
 
-## Explicitly NOT recommended
+## Explicitly NOT recommended (in this plan)
 
-- **Renaming apps to drop the `-master`/`-backup` suffix** — see
-  `plans/README.md` Q3: requires app reinstalls for a ~10-line saving and
-  removes self-identifying names from a dual-active setup.
+- **Renaming apps to drop the `-master`/`-backup` suffix as a manual,
+  big-bang reinstall** — the end-state of same names/same ports on both hosts
+  *is* endorsed, but only via the phased pipeline in
+  [plan 06](06-app-definition-replication.md) (phase 3 adds a per-app
+  `per_server_name_suffix` transition flag). Until then, this plan leaves all
+  suffix-composition logic untouched.
 - **`set -u` / `set -o pipefail` globally** — the codebase deliberately relies
   on unset-is-empty (`LOCAL_SOURCE` vs `REMOTE_SOURCE`, `${TEST_MODE:+...}`)
   and long pipelines whose early stages may non-fatally fail. Retrofitting

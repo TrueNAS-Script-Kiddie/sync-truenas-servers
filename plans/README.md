@@ -12,6 +12,7 @@ replacement snippets, and verification steps.
 | [03-makefile-and-hygiene.md](03-makefile-and-hygiene.md) | Makefile is broken in 3 ways; add `.gitattributes` | Low | Yes (or delete the Makefile if SFTP is the real deploy path) |
 | [04-simplifications.md](04-simplifications.md) | Behavior-preserving refactors: direction helper, dead code, `--app` validation at parse time | Medium | Yes, after 01 |
 | [05-python-vm-transform.md](05-python-vm-transform.md) | Optional: port the 140-line jq transform to a small, offline-testable Python script | Medium | Optional |
+| [06-app-definition-replication.md](06-app-definition-replication.md) | App-definition replication via `midclt app.config`/`app.create` (VM-pattern mirror), config convergence, phased name convergence | Medium–High | Yes (phased); closes the real failover gap |
 
 ## Global guardrails (apply to EVERY plan)
 
@@ -39,25 +40,43 @@ replacement snippets, and verification steps.
 
 ### Q3 — Rename apps so both servers use the same app name (drop `-master`/`-backup`)?
 
-**Recommendation: keep the suffixed names.** Reasoning:
+**Revised recommendation (2026-07-02): converge — but via the
+app-definition-replication pipeline, not as a manual reinstall.** An earlier
+analysis (correctly) established that the suffixed names and divergent ports
+are *convention, not requirement*: TrueNAS scopes app names per host, and
+different hosts mean no port conflicts. The only things that genuinely must
+diverge are external identities (Plex GUID/claim, anything registered with a
+third party) and per-host values like certificate IDs. Everything else is
+self-imposed drift, and every artificial divergence is one more transform rule
+and one more thing to remember.
 
-- The suffix is only consumed in ~5 places (`Control_app_with_checks` name
-  composition, the two docker greps in `immich_db.bash`, two `Control_app`
-  calls). Dropping it saves perhaps 10–15 lines and one indirect expansion —
-  a small win.
-- TrueNAS (Goldeye) cannot rename an installed app; the name is fixed at
-  install. Equalizing the names means **delete + reinstall of every app on
-  both servers**, re-attaching host-path storage and reconfiguring. That is a
-  risky, hours-long migration to buy a minor simplification.
-- The suffix carries real operational information in a dual-active setup:
-  container names, `midclt` output, and log lines self-identify which server
-  they belong to. When you're ssh'd into the wrong box, `immich-backup` in a
-  prompt/log is a cheap mistake-preventer — and "ran the sync in the wrong
-  direction" is the single most dangerous operator error this system has.
-- Pragmatic middle ground: **if an app ever gets reinstalled anyway**, install
-  it without the suffix on both servers and make the suffix per-app config
-  (e.g. an optional `"name_suffix": false` field in `apps.json`). Don't
-  reinstall just for this.
+Two corrections to that analysis, and one reinforcement:
+
+- **Name convergence is not "small."** TrueNAS cannot rename an installed
+  app, so same-names means delete + recreate on **both** hosts (master too).
+  Do it last, per app, using the pipeline — each migration then doubles as a
+  failover drill. See plan 06 phase 3, which adds a per-app
+  `per_server_name_suffix` transition flag so apps migrate one at a time.
+- The suffix interpolation lives in **code**, not `apps.json`
+  (`lib/rep_apps.bash:44`, the docker greps in `lib/immich_db.bash`) — the
+  code saving from dropping it is real but modest (~10–15 lines).
+- **Reinforcement:** identical ports on both hosts is not just cleanup — the
+  `data` floating-alias failover (hosts-file repoint) is only transparent for
+  web services if both hosts serve on the same port. Port convergence is
+  *required* by the homelab direction, independent of naming.
+
+The genuinely load-bearing insight from that analysis: **demand 1 (fast
+failover) is not fully served by this repo today** — data replication assumes
+the target app is already installed, and installing it is the manual,
+error-prone step. `midclt call app.config` / `app.create` / `app.update` make
+an extract→transform→apply pipeline feasible, structurally identical to the
+existing VM pattern. That is [plan 06](06-app-definition-replication.md):
+phase 0 verifies the midclt payload shapes on a live host, phase 1 audits and
+converges the artificial config drift (ports included), phase 2 builds the
+`app_definition_replication` subtask, phase 3 converges names.
+
+Until phase 3 completes, the suffix logic stays in the code — plans 01–04
+deliberately leave it untouched.
 
 ### Q4 — Complete rewrite in bash?
 
