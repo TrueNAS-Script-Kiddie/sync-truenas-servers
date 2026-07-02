@@ -110,11 +110,14 @@ function Process_command_line_options() {
             [[ ! " ${VM_LIST[*]} " =~ " ${OPTION#--vm=} " ]] && VM_LIST+=( "${OPTION#--vm=}" )
             ;;
         --running_in_background)
+            # shellcheck disable=SC2034  # consumed by bin/sync_truenas_servers
             RUNNING_IN_BACKGROUND="true"
+            # shellcheck disable=SC2034  # consumed by bin/sync_truenas_servers
             LOG_FILE="$1"
             shift
             ;;
         --test)
+            # shellcheck disable=SC2034  # TEST_MODE consumed throughout lib/*.bash (see architectural_patterns.md)
             TEST_MODE="true"
             ;;
         *)
@@ -149,6 +152,7 @@ function Process_command_line_options() {
     
 
     # Define source and target
+    # shellcheck disable=SC2034  # LOCAL_SOURCE/REMOTE_SOURCE/LOCAL_TARGET/REMOTE_TARGET consumed across lib/*.bash (direction model, see architectural_patterns.md)
     case "${TASK}:${LOCAL_SERVER_ID}" in
         backup_to_master:master) REMOTE_SOURCE="backup"; LOCAL_TARGET="master" ;;
         backup_to_master:backup) LOCAL_SOURCE="backup"; REMOTE_TARGET="master" ;;

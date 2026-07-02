@@ -82,43 +82,74 @@ directive is the textbook-correct fix for this exact situation, so treat as
 done; spot-check next time `config.local.bash`/`config.example.bash` is open
 in the editor.
 
-### 1b. Structural: every `lib/*.bash` file will show false "unused" hits when linted *standalone* — no per-file fix; use the canonical command instead
+### 1b. `lib/cli.bash` — variables set here, read only by other files — ✅ DONE (2026-07-03, corrected)
 
-Linting `lib/cli.bash` alone (`shellcheck -x lib/cli.bash`) reports SC2034
-"appears unused" for `RUNNING_IN_BACKGROUND`, `LOG_FILE`, `TEST_MODE`,
-`LOCAL_SOURCE`, `REMOTE_SOURCE`, `LOCAL_TARGET`, `REMOTE_TARGET`
-([lib/cli.bash:113,114,118,155,156](../lib/cli.bash#L113)). All seven are
-genuinely used — by `bin/sync_truenas_servers` and by sibling `lib/*.bash`
-files that get sourced after `cli.bash` in the flat namespace. **This is the
-mirror image of item 1**, not a new bug: item 1 fixed the direction where
-`bin/sync_truenas_servers` sources a file and needs to see into it; this is
-the direction where a `lib/*.bash` file's own variables are consumed by
-*its consumer* (or a sibling), and shellcheck has no static way to look
-"outward" from a file to whoever sources it. `# shellcheck source=` directives
-can't help here — there's no `source` line to annotate in `cli.bash` itself.
+**This item originally gave the wrong advice — corrected below.** The
+original text claimed `shellcheck -x bin/sync_truenas_servers` reporting zero
+hits meant "this isn't a live problem in practice." That's true only for that
+one CLI invocation — it says nothing about what actually populates your
+**editor's Problems panel**, which is what you're using
+(`timonwong.shellcheck` / vscode-shellcheck). Per that extension's own docs:
+"the linter... analyzes the currently open file... The extension does **not**
+analyze an entry point across multiple files." So when `lib/cli.bash` (or any
+other `lib/*.bash` file) is open in the editor, the extension lints *that
+file alone* — it never runs `shellcheck -x bin/sync_truenas_servers` on your
+behalf. **Yes, this was live noise in your Problems panel.**
 
-**Verified this isn't a live problem in practice:** `shellcheck -x
-bin/sync_truenas_servers` (the actual entry point, which is how the program
-is really executed) reports **zero** of these seven — confirming that once
-everything is linted together through the real entry point, cross-file usage
-is fully understood and there's no real dead-code issue here.
+The scope was also narrower than first stated. Testing showed only variables
+that are set in a file but **never read in that same file** are affected —
+e.g. `SOURCE_POOL`/`TARGET_POOL` in `rep_apps.bash` are read extensively in
+that same file (rsync path building), so no false positive there, even though
+`immich_db.bash` also reads them. In this codebase that narrow condition
+applies almost entirely to `lib/cli.bash`, whose whole job is setting flags
+for other files to consume: `RUNNING_IN_BACKGROUND`, `LOG_FILE`, `TEST_MODE`
+([lib/cli.bash:113-118](../lib/cli.bash#L113)), and
+`LOCAL_SOURCE`/`REMOTE_SOURCE`/`LOCAL_TARGET`/`REMOTE_TARGET`
+([lib/cli.bash:153-157](../lib/cli.bash#L153), the direction-model case
+statement) — plus the already-covered `EMAIL_TO` in `config.local.bash` (1a).
 
-**Recommendation — don't chase this with per-variable `disable` comments**
-(unlike the one-off `EMAIL_TO` case in 1a, this would mean dozens of comments
-sprinkled across every `lib/*.bash` file, and would risk *hiding* a real
-future dead-variable bug under the noise). Instead, adopt **`shellcheck -x
-bin/sync_truenas_servers` as the project's one authoritative lint command**,
-and accept that opening an individual `lib/*.bash` file standalone in the
-editor will show some expected-noisy "unused" hits for its cross-file-consumed
-globals. Concretely:
-- Add one line to `AGENTS.md`/`CLAUDE.md` "Essential commands":
-  `shellcheck -x bin/sync_truenas_servers   # lints every lib/*.bash file together, in context`
-- Optional: add a `lint` target to the `Makefile` that runs the same command,
-  so it's discoverable without reading the docs.
+**Applied — the actual fix, matching the 1a precedent:** targeted
+`# shellcheck disable=SC2034` comments at each site, with a one-line reason:
 
-This note also applies to the `SOURCE_OR_TARGET_ALL_VM_JSON_REF` and
-`TARGET_VM_JSON_FILE` findings in section 4 below — read that section for the
-two that are real vs. this same structural cause.
+```bash
+        --running_in_background)
+            # shellcheck disable=SC2034  # consumed by bin/sync_truenas_servers
+            RUNNING_IN_BACKGROUND="true"
+            # shellcheck disable=SC2034  # consumed by bin/sync_truenas_servers
+            LOG_FILE="$1"
+            shift
+            ;;
+        --test)
+            # shellcheck disable=SC2034  # TEST_MODE consumed throughout lib/*.bash (see architectural_patterns.md)
+            TEST_MODE="true"
+            ;;
+```
+
+```bash
+    # shellcheck disable=SC2034  # LOCAL_SOURCE/REMOTE_SOURCE/LOCAL_TARGET/REMOTE_TARGET consumed across lib/*.bash (direction model, see architectural_patterns.md)
+    case "${TASK}:${LOCAL_SERVER_ID}" in
+        backup_to_master:master) REMOTE_SOURCE="backup"; LOCAL_TARGET="master" ;;
+        ...
+    esac
+```
+
+One directive placed immediately before `case ... in` turned out to suppress
+SC2034 for **all four** arm lines below it, not just the literal next line —
+shellcheck applies a directive to the whole following block when it precedes
+a block-opening keyword, not just one physical line. One comment, not four.
+
+**Verified 2026-07-03:** `shellcheck -x lib/cli.bash` now reports only the
+two already-documented SC2076 false positives (item 3e) — all seven SC2034
+hits are gone.
+
+This also means the general "structural, applies to every `lib/*.bash` file"
+framing in the original text was **overstated** — it doesn't apply broadly,
+only to variables genuinely never read in their own defining file. No other
+`lib/*.bash` file in this codebase hit that condition in the full-coverage
+pass (section 4 below covers the two remaining SC2034-shaped findings —
+`SOURCE_OR_TARGET_ALL_VM_JSON_REF` and `TARGET_VM_JSON_FILE` — and neither is
+this same cause: one's a nameref-resolution limitation, the other is a
+genuinely dead variable).
 
 ---
 

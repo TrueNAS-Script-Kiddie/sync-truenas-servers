@@ -13,7 +13,7 @@ replacement snippets, and verification steps.
 | [04-simplifications.md](04-simplifications.md) | Behavior-preserving refactors: direction helper, dead code, `--app` validation at parse time | Medium | Yes, after 01 |
 | [05-python-vm-transform.md](05-python-vm-transform.md) | Optional: port the 140-line jq transform to a small, offline-testable Python script | Medium | Optional |
 | [06-app-definition-replication.md](06-app-definition-replication.md) | App-definition replication via `midclt app.config`/`app.create` (VM-pattern mirror), config convergence, phased name convergence | Medium–High | Yes (phased); closes the real failover gap |
-| [07-shellcheck-findings.md](07-shellcheck-findings.md) | Full-codebase shellcheck triage (every tracked `.bash` file). Root-cause fixes done (1/1a, verified); 10 small real fixes remain (2a-2j, one elevated: DB backup/restore path); rest documented as false positives, incl. one explicit DO-NOT-fix | Low | Items 2a-2j remain |
+| [07-shellcheck-findings.md](07-shellcheck-findings.md) | Full-codebase shellcheck triage (every tracked `.bash` file). Root-cause fixes done (1/1a/1b, verified — 1b corrects an earlier wrong claim re: the VSCode extension vs. CLI); 10 small real fixes remain (2a-2j, one elevated: DB backup/restore path); rest documented as false positives, incl. one explicit DO-NOT-fix | Low | Items 2a-2j remain |
 
 ## Global guardrails (apply to EVERY plan)
 
