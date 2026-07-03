@@ -31,6 +31,30 @@ function Perform_filesystem_replication() {
         fi
     }
 
+    # Prints fuser/smbstatus diagnostics for one or more datasets on one location,
+    # with consistent indentation/headers matching the rest of this script's output.
+    # Shared by both failure points below (pre-flight umount, and zfs_autobackup itself).
+    function l_Print_diagnostics() {
+        local LOCATION_MODE="$1"
+        local SERVER_ID="$2"
+        local PARENT_DATASET="$3"
+        shift 3
+        local -a DATASETS=( "$@" )
+        local DS
+
+        echo
+        echo "  --- Diagnostics: truenas-${SERVER_ID} ---"
+        for DS in "${DATASETS[@]}"; do
+            echo
+            echo "    fuser -vm /mnt/${PARENT_DATASET}/${DS}:"
+            Execute_command "${LOCATION_MODE}" "fuser -vm '/mnt/${PARENT_DATASET}/${DS}' 2>&1" | column -t | sed 's/^/      /'
+        done
+        echo
+        echo "    smbstatus -L (locked files):"
+        Execute_command "${LOCATION_MODE}" "smbstatus -L 2>&1" | sed 's/^/      /'
+        echo
+    }
+
     function l_Execute_replication_and_remount() {
         local IMPACTED_DATASET
         local ZFS_AUTOBACKUP_COMMAND="autobackup-venv/bin/python -m zfs_autobackup.ZfsAutobackup"
@@ -58,7 +82,11 @@ function Perform_filesystem_replication() {
                      | paste -sd' ' - \
                      | grep -q '^filesystem[[:space:]]*${EXPECTED}\$'"; then
                     echo "  truenas-${TARGET_SERVER_ID} - zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
-                    Execute_command "${EXEC_MODE}" "zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"
+                    if ! Execute_command "${EXEC_MODE}" "zfs ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}'"; then
+                        echo "  ${ACTION^} failed (dataset busy?) — gathering diagnostics:"
+                        l_Print_diagnostics "${EXEC_MODE}" "${TARGET_SERVER_ID}" "${TARGET_PARENT_DATASET}" "${IMPACTED_DATASET}"
+                        Background_error "ERROR: Failed to ${ACTION} '${TARGET_PARENT_DATASET}/${IMPACTED_DATASET}' on truenas-${TARGET_SERVER_ID} (dataset busy?)."
+                    fi
                     CHANGED="true"
                     [[ "${ACTION}" == "umount" ]] && UNMOUNTED_LIST+=( "${IMPACTED_DATASET}" )
                 fi
@@ -71,6 +99,13 @@ function Perform_filesystem_replication() {
 
         l_Toggle_mounts "umount" "${IMPACTED_DATASETS[@]}"
 
+        # Guarantee remount of whatever THIS run itself unmounted (UNMOUNTED_LIST),
+        # even if Background_error aborts the script before reaching the explicit
+        # remount call below. Deliberately does NOT remount all of IMPACTED_DATASETS —
+        # only what this invocation's own umount step touched, so a dataset left
+        # unmounted for an unrelated, intentional reason is never disturbed.
+        trap 'l_Toggle_mounts "mount" "${UNMOUNTED_LIST[@]}"' EXIT
+
         # --- Run zfs_autobackup ---
         cd "${ZFS_AUTOBACKUP_PATH}" || Background_error "ERROR: Cannot cd into ${ZFS_AUTOBACKUP_PATH}"
         echo "  ${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}"
@@ -78,12 +113,25 @@ function Perform_filesystem_replication() {
         if ${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}; then
             echo "  ZFS Replication completed successfully"
         else
+            # Diagnostics run for real even under --test: zfs_autobackup itself is invoked
+            # directly above (not through Execute_command), so it can genuinely fail in
+            # --test mode too, and fuser/smbstatus are read-only regardless.
+            local DIAG_TARGET_MODE="$([[ -n "${LOCAL_TARGET}" ]] && echo local || echo remote)"
+            local DIAG_SOURCE_MODE="$([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote)"
+            local DIAG_TARGET_SERVER_ID="$([[ -n "${LOCAL_SOURCE}" ]] && echo "${REMOTE_SERVER_ID}" || echo "${LOCAL_SERVER_ID}")"
+            local DIAG_SOURCE_SERVER_ID="$([[ -n "${LOCAL_SOURCE}" ]] && echo "${LOCAL_SERVER_ID}" || echo "${REMOTE_SERVER_ID}")"
+
+            echo "  ZFS Replication failed — gathering diagnostics:"
+            l_Print_diagnostics "${DIAG_TARGET_MODE}" "${DIAG_TARGET_SERVER_ID}" "${TARGET_PARENT_DATASET}" "${IMPACTED_DATASETS[@]}"
+            l_Print_diagnostics "${DIAG_SOURCE_MODE}" "${DIAG_SOURCE_SERVER_ID}" "${SOURCE_PARENT_DATASET}" "${IMPACTED_DATASETS[@]}"
+
             Background_error "ERROR: ZFS Replication failed"
         fi
         echo
         cd - >/dev/null || Background_error "ERROR: Failed to cd back after zfs_autobackup run."
 
         l_Toggle_mounts "mount" "${UNMOUNTED_LIST[@]}"
+        trap - EXIT
     }
 
     local SCOPE="$1"
@@ -96,6 +144,7 @@ function Perform_filesystem_replication() {
     local ZFS_AUTOBACKUP_OPTARGS
     local SSH_OPTARGS
     local TARGET_PARENT_DATASET
+    local SOURCE_PARENT_DATASET
     local IMPACTED_DATASETS
     local ZFS_AUTOBACKUP_TASK_OPTARGS
 
@@ -108,13 +157,16 @@ function Perform_filesystem_replication() {
         [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "backup" ]]; then
         SSH_OPTARGS="--ssh-config ${SSH_CONFIG_FILE} --ssh-source truenas-${REMOTE_SOURCE}"
         TARGET_PARENT_DATASET="$(Resolve_pool "${LOCAL_TARGET}" "${POOL_TYPE}")/encrypted-ds"
+        SOURCE_PARENT_DATASET="$(Resolve_pool "${REMOTE_SOURCE}" "${POOL_TYPE}")/encrypted-ds"
     elif [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "backup" ]] || \
         [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "master" ]]; then
         SSH_OPTARGS="--ssh-config ${SSH_CONFIG_FILE} --ssh-target truenas-${REMOTE_TARGET}"
         TARGET_PARENT_DATASET="$(Resolve_pool "${REMOTE_TARGET}" "${POOL_TYPE}")/encrypted-ds"
+        SOURCE_PARENT_DATASET="$(Resolve_pool "${LOCAL_SOURCE}" "${POOL_TYPE}")/encrypted-ds"
     fi
 
     [[ "${TARGET_PARENT_DATASET}" != "/encrypted-ds" ]] || Background_error "ERROR: Failed to resolve target pool for TARGET_PARENT_DATASET."
+    [[ "${SOURCE_PARENT_DATASET}" != "/encrypted-ds" ]] || Background_error "ERROR: Failed to resolve source pool for SOURCE_PARENT_DATASET."
 
     mapfile -t IMPACTED_DATASETS < <(
         Execute_command "$([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote)" \
