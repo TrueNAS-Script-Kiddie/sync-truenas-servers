@@ -295,6 +295,7 @@ function Cleanup_vm_disk_tags() {
     SERVER_ID_VAR="${SOURCE_LOCATION^^}_SERVER_ID"
     SERVER_ID="${!SERVER_ID_VAR}"
     POOL_NAME="$(Resolve_pool "${SERVER_ID}" "fast")"
+    [[ -n "${POOL_NAME}" ]] || Background_error "ERROR: Failed to resolve pool for server '${SERVER_ID}'."
     TASK_SCOPE="${TASK}_vm_latest_snapshot_only"
 
     mapfile -t TAGGED_DATASET_LIST < <(Execute_command "${SOURCE_LOCATION}" \
@@ -328,6 +329,7 @@ function Tag_vm_disks() {
     local SERVER_ID_VAR="${SOURCE_LOCATION^^}_SERVER_ID"
     local SERVER_ID="${!SERVER_ID_VAR}"
     local POOL_NAME="$(Resolve_pool "${SERVER_ID}" "fast")"
+    [[ -n "${POOL_NAME}" ]] || Background_error "ERROR: Failed to resolve pool for server '${SERVER_ID}'."
     local TASK_SCOPE="${TASK}_vm_latest_snapshot_only"
 
     mapfile -t DISK_PATHS < <(jq -r --arg VM "$VM" '
@@ -522,7 +524,7 @@ function Rsync_vm_file_disks() {
             esac
 
             # Ensure target directory exists
-            Execute_command "${TARGET_LOCATION}" "mkdir -p \"${TARGET_PATH%/*}\"" \
+            Execute_command "${TARGET_LOCATION}${TEST_MODE:+"_test"}" "mkdir -p \"${TARGET_PATH%/*}\"" \
                 || Background_error "ERROR: Failed to create target dir ${TARGET_PATH%/*} for VM '${VM}'"
 
             # Print general header once
@@ -703,6 +705,8 @@ function Perform_vm_replication() {
         TARGET_POOL="$(Resolve_pool "${LOCAL_SERVER_ID}" "fast")"
         TARGET_SERVER_ID="${LOCAL_SERVER_ID}"
     fi
+
+    [[ -n "${SOURCE_POOL}" && -n "${TARGET_POOL}" ]] || Background_error "ERROR: Failed to resolve source/target pool (source='${SOURCE_POOL}', target='${TARGET_POOL}')."
 
     # Extract VM definitions into JSONs
     Extract_vm_definitions

@@ -94,7 +94,7 @@ function Restore_immich_DB() {
 
     # Restore Postgres DB from backup
     echo "Restoring of the Immich DB from /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz"
-    echo "Executing on TrueNAS-${TARGET_SERVER_ID^}: gunzip < \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\" | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich"
+    echo "Executing on TrueNAS-${TARGET_SERVER_ID^}: gunzip < \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\" | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich --host=localhost"
     if [[ -z "${TEST_MODE}" ]]; then
         Execute_command "${TARGET_LOCATION}" "gunzip < /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich --host=localhost" >"${DB_RESTORE_LOG}" 2>&1 \
             || Background_error "ERROR: DB restore failed. Check ${DB_RESTORE_LOG} for more details."

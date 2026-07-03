@@ -13,7 +13,7 @@ function Wait_for_docker_state() {
     local ELAPSED_TIME
 
     while true; do
-        CURRENT_STATE=$(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}} {{.State}}' | grep \"${CONTAINER_NAME}\" | awk '{print \$2}'")
+        CURRENT_STATE=$(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}} {{.State}}' | awk -v c=\"${CONTAINER_NAME}\" '\$1==c {print \$2}'")
         [[ "$CURRENT_STATE" == "$DESIRED_STATE" ]] && break
         CURRENT_TIME="$(date +%s)"
         ELAPSED_TIME="$((CURRENT_TIME - START_TIME))"
@@ -37,7 +37,7 @@ function Control_docker_containers() {
     esac
 
     for CONTAINER in "${CONTAINERS[@]}"; do
-        CURRENT_STATE=$(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}} {{.State}}' | grep \"${CONTAINER}\" | awk '{print \$2}'")
+        CURRENT_STATE=$(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}} {{.State}}' | awk -v c=\"${CONTAINER}\" '\$1==c {print \$2}'")
         if [[ "${CURRENT_STATE}" != "${DESIRED_STATE}" ]]; then
         echo "Container ${CONTAINER}: Changing state from ${CURRENT_STATE} to ${DESIRED_STATE}"
         Execute_command "${LOCATION}" "docker ${ACTION} \"${CONTAINER}\" >/dev/null"

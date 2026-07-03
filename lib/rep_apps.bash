@@ -8,11 +8,16 @@ function Control_app() {
     local LOCATION="$3"
 
     local JOBID
+    local JOB_STATE
     local TIMEOUT_COUNTER="0"
     local MAX_TIMEOUT=60
 
     if JOBID="$(Execute_command "${LOCATION}" "midclt call app.${ACTION} \"${FULL_APP_NAME}\"")" && [[ -n "${JOBID}" ]]; then
-        while [[ "$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")" != "SUCCESS" ]]; do
+        while true; do
+            JOB_STATE="$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")"
+            [[ "${JOB_STATE}" == "SUCCESS" ]] && break
+            [[ "${JOB_STATE}" =~ ^(FAILED|ABORTED|ERROR)$ ]] \
+                && Background_error "ERROR: ${ACTION^} of ${LOCATION} ${FULL_APP_NAME} ended in state ${JOB_STATE}."
             ((TIMEOUT_COUNTER++))
             [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Waiting for ${LOCATION} ${FULL_APP_NAME} to ${ACTION} has timed out."
             echo -n "."
@@ -117,6 +122,8 @@ function Perform_app_replication() {
         TARGET_SERVER_ID="${LOCAL_SERVER_ID}"
     fi
 
+    [[ -n "${SOURCE_POOL}" && -n "${TARGET_POOL}" ]] || Background_error "ERROR: Failed to resolve source/target pool (source='${SOURCE_POOL}', target='${TARGET_POOL}')."
+
     echo "##########################################"
     echo "### Performing Application Replication ###"
     echo "##########################################"
@@ -139,8 +146,7 @@ function Perform_app_replication() {
                 fi
             done
             if [[ "${FOUND}" == "false" ]]; then
-                echo "ERROR: Requested app '${APP_NAME}' not found in config/apps.json"
-                exit 1
+                Background_error "ERROR: Requested app '${APP_NAME}' not found in config/apps.json"
             fi
         done
     fi

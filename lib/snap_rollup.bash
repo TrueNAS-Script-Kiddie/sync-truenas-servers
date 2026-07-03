@@ -4,14 +4,17 @@
 
 function Perform_snapshot_rollup() {
     local EXEC_MODE
+    local TARGET_POOL
 
     echo "######################################"
     echo "### Performing ZFS snapshot rollup ###"
     echo "######################################"
     echo
 
-    ROLLUP_CMD="${SCRIPT_DIR/${LOCAL_SOURCE}${REMOTE_SOURCE}/${LOCAL_TARGET}${REMOTE_TARGET}}/../../zfs-rollup/rollup.py -v --prefix auto -i hourly:48,daily:14,weekly:8,monthly:24,yearly:10 $(Resolve_pool "${LOCAL_TARGET}${REMOTE_TARGET}")/encrypted-ds/media-ds"
-    
+    TARGET_POOL="$(Resolve_pool "${LOCAL_TARGET}${REMOTE_TARGET}")"
+    [[ -n "${TARGET_POOL}" ]] || Background_error "ERROR: Failed to resolve rollup target pool."
+    ROLLUP_CMD="${SCRIPT_DIR/${LOCAL_SOURCE}${REMOTE_SOURCE}/${LOCAL_TARGET}${REMOTE_TARGET}}/../../zfs-rollup/rollup.py -v --prefix auto -i hourly:48,daily:14,weekly:8,monthly:24,yearly:10 ${TARGET_POOL}/encrypted-ds/media-ds"
+
     if [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "master" ]] || \
         [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "backup" ]]; then
         EXEC_MODE="local_verbose"

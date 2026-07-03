@@ -7,13 +7,14 @@ replacement snippets, and verification steps.
 
 | Plan | What | Risk | Do it? |
 |---|---|---|---|
-| [01-bug-fixes.md](01-bug-fixes.md) | 11 concrete bugs, each with a surgical fix | Low | **Yes, first** |
-| [02-safety-and-notifications.md](02-safety-and-notifications.md) | Failure email, single-instance lock, log/dump retention | Low | **Yes** |
+| [01-bug-fixes.md](01-bug-fixes.md) | 11 concrete bugs. 8 low-risk/easily-tested ones done, lint-verified, and confirmed on both a `--test` and a real run (2026-07-03); 3 deferred (Immich restore guard, dataset-selection query change, VM target-state check) | Low (done items); Medium (3 deferred) | Tackle the 3 deferred ones next |
+| [02-safety-and-notifications.md](02-safety-and-notifications.md) | Failure email, single-instance lock, log/dump retention | Low | **Yes** — real-run testing on 2026-07-03 (plan 08) directly demonstrated the missing-failure-email gap |
 | [03-makefile-and-hygiene.md](03-makefile-and-hygiene.md) | Makefile is broken in 3 ways; add `.gitattributes` | Low | Yes (or delete the Makefile if SFTP is the real deploy path) |
 | [04-simplifications.md](04-simplifications.md) | Behavior-preserving refactors: direction helper, dead code, `--app` validation at parse time | Medium | Yes, after 01 |
 | [05-python-vm-transform.md](05-python-vm-transform.md) | Optional: port the 140-line jq transform to a small, offline-testable Python script | Medium | Optional |
 | [06-app-definition-replication.md](06-app-definition-replication.md) | App-definition replication via `midclt app.config`/`app.create` (VM-pattern mirror), config convergence, phased name convergence | Medium–High | Yes (phased); closes the real failover gap |
-| [07-shellcheck-findings.md](07-shellcheck-findings.md) | Full-codebase shellcheck triage (every tracked `.bash` file). Everything actionable is done and lint-verified: root-cause fixes (1/1a/1b), all 10 real fixes (2a-2j), all false-positive disables (3a/3d/3e/3f). 3b/3c intentionally left for other plans' real fixes; one valid-but-deferred item kept visible on purpose (4a) | Low | **Needs a real TrueNAS-host `--test` run before trusting in production** — only lint/parse-verified so far |
+| [07-shellcheck-findings.md](07-shellcheck-findings.md) | Full-codebase shellcheck triage (every tracked `.bash` file). Everything actionable is done, lint-verified, and confirmed on both a `--test` and a real run (2026-07-03): root-cause fixes (1/1a/1b), all 10 real fixes (2a-2j), all false-positive disables (3a/3d/3e/3f). 3b/3c intentionally left for other plans' real fixes; one valid-but-deferred item kept visible on purpose (4a) | Low | Done |
+| [08-known-operational-issues.md](08-known-operational-issues.md) | Two pre-existing, non-code issues surfaced by real-run testing: Immich Postgres collation-version warning (Immich/Postgres admin matter, no action here) and intermittent ZFS "dataset is busy" receive failures on large-file backup datasets (external cause under investigation; this script's all-or-nothing abort-on-failure behavior is the one actionable piece) | N/A (documentation) / Low (the one actionable piece overlaps with plan 02) | Read; the actionable overlap is "do plan 02 first" |
 
 ## Global guardrails (apply to EVERY plan)
 

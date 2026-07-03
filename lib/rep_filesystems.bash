@@ -101,8 +101,8 @@ function Perform_filesystem_replication() {
 
     ZFS_AUTOBACKUP_OPTARGS="--strip-path 2 --exclude-received"
 
-    [[ "$(Execute_command local "zfs list -H -o mounted $(Resolve_pool "${LOCAL_SERVER_ID}" "${POOL_TYPE}")/encrypted-ds")" == "no" ]]   && Background_error "ERROR: $(Resolve_pool "${LOCAL_SERVER_ID}")/encrypted-ds on truenas-${LOCAL_SERVER_ID} is not mounted (and/or unlocked)."
-    [[ "$(Execute_command remote "zfs list -H -o mounted $(Resolve_pool "${REMOTE_SERVER_ID}" "${POOL_TYPE}")/encrypted-ds")" == "no" ]] && Background_error "ERROR: $(Resolve_pool "${REMOTE_SERVER_ID}")/encrypted-ds on truenas-${REMOTE_SERVER_ID} is not mounted (and/or unlocked)."
+    [[ "$(Execute_command local "zfs list -H -o mounted $(Resolve_pool "${LOCAL_SERVER_ID}" "${POOL_TYPE}")/encrypted-ds")" == "yes" ]]   || Background_error "ERROR: $(Resolve_pool "${LOCAL_SERVER_ID}" "${POOL_TYPE}")/encrypted-ds on truenas-${LOCAL_SERVER_ID} is not mounted (and/or unlocked)."
+    [[ "$(Execute_command remote "zfs list -H -o mounted $(Resolve_pool "${REMOTE_SERVER_ID}" "${POOL_TYPE}")/encrypted-ds")" == "yes" ]] || Background_error "ERROR: $(Resolve_pool "${REMOTE_SERVER_ID}" "${POOL_TYPE}")/encrypted-ds on truenas-${REMOTE_SERVER_ID} is not mounted (and/or unlocked)."
 
     if [[ "${TASK}" == "backup_to_master" && "${LOCAL_SERVER_ID}" == "master" ]] || \
         [[ "${TASK}" == "master_to_backup" && "${LOCAL_SERVER_ID}" == "backup" ]]; then
@@ -113,6 +113,8 @@ function Perform_filesystem_replication() {
         SSH_OPTARGS="--ssh-config ${SSH_CONFIG_FILE} --ssh-target truenas-${REMOTE_TARGET}"
         TARGET_PARENT_DATASET="$(Resolve_pool "${REMOTE_TARGET}" "${POOL_TYPE}")/encrypted-ds"
     fi
+
+    [[ "${TARGET_PARENT_DATASET}" != "/encrypted-ds" ]] || Background_error "ERROR: Failed to resolve target pool for TARGET_PARENT_DATASET."
 
     mapfile -t IMPACTED_DATASETS < <(
         Execute_command "$([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote)" \

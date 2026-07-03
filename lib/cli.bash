@@ -73,7 +73,6 @@ function Process_command_line_options() {
             PERFORM_VM_REP="true"
             PERFORM_ZFS_REP_ALL="true"
             PERFORM_ZFS_REP_LATEST="true"
-            PERFORM_ROLLUP="true"
             ;;
         --subtask=app_replication)
             PERFORM_APP_REP="true"
