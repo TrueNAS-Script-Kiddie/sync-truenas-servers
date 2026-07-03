@@ -2,14 +2,60 @@
 # lib/common.bash
 # Common helpers: error handling and command execution
 
-function Background_error() {
-    echo -e "$1"
+# Restore-to-previous-state cleanup stack (LIFO). A module calls
+# Register_cleanup '<command>' (single-quoted: expanded at fire time, not at
+# registration) before entering a section whose side effects must be undone on
+# failure — e.g. remounting what rep_filesystems unmounted, or restarting a VM
+# this run stopped — and Unregister_cleanup after undoing them itself on the
+# normal path. Nesting is supported: Run_cleanup pops newest-first, so an inner
+# section's cleanup (remount filesystems) runs before an outer one's (restart
+# the VM that owns them). Background_error runs the stack BEFORE killing the
+# tail, so cleanup output is visible in the live terminal (not only in the log
+# file); the 'trap Run_cleanup; Kill_tail EXIT' in bin/sync_truenas_servers is
+# the safety net for any exit that bypasses Background_error.
+declare -a CLEANUP_COMMAND_STACK=()
+
+function Register_cleanup() {
+    CLEANUP_COMMAND_STACK+=( "$1" )
+}
+
+function Unregister_cleanup() {
+    if (( ${#CLEANUP_COMMAND_STACK[@]} > 0 )); then
+        unset 'CLEANUP_COMMAND_STACK[-1]'
+    fi
+}
+
+function Run_cleanup() {
+    local CLEANUP_COMMAND
+    while (( ${#CLEANUP_COMMAND_STACK[@]} > 0 )); do
+        CLEANUP_COMMAND="${CLEANUP_COMMAND_STACK[-1]}"
+        # Pop BEFORE eval: if a cleanup itself fails into Background_error, the
+        # recursive Run_cleanup call continues with the REMAINING entries
+        # instead of looping forever on the failing one — so e.g. a failed
+        # remount can no longer prevent a registered VM restart from running.
+        unset 'CLEANUP_COMMAND_STACK[-1]'
+        eval "${CLEANUP_COMMAND}"
+    done
+}
+
+# Kill the foreground 'tail -f' that streams the log to the terminal. This is
+# infrastructure teardown, not restore-to-previous-state — it must run on EVERY
+# exit (success included) and always LAST, after all cleanup output has been
+# written where the tail can still show it. Idempotent: clears TAIL_PID so a
+# second call (Background_error followed by the EXIT trap) is a no-op.
+function Kill_tail() {
     if [[ -n "${TAIL_PID}" ]]; then
         sleep 1
         kill "${TAIL_PID}"
-    else
-        echo "ERROR: Couldn't find tail PID. Are you sure this is properly running in the background?"
+        TAIL_PID=""
     fi
+}
+
+function Background_error() {
+    echo -e "$1"
+    Run_cleanup
+    [[ -z "${TAIL_PID}" ]] && echo "ERROR: Couldn't find tail PID. Are you sure this is properly running in the background?"
+    Kill_tail
     exit 1
 }
 

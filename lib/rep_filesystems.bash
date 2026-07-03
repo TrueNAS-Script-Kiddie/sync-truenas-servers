@@ -100,11 +100,17 @@ function Perform_filesystem_replication() {
         l_Toggle_mounts "umount" "${IMPACTED_DATASETS[@]}"
 
         # Guarantee remount of whatever THIS run itself unmounted (UNMOUNTED_LIST),
-        # even if Background_error aborts the script before reaching the explicit
-        # remount call below. Deliberately does NOT remount all of IMPACTED_DATASETS —
-        # only what this invocation's own umount step touched, so a dataset left
-        # unmounted for an unrelated, intentional reason is never disturbed.
-        trap 'l_Toggle_mounts "mount" "${UNMOUNTED_LIST[@]}"' EXIT
+        # even if the script aborts before reaching the explicit remount call below.
+        # Registered on the cleanup stack (lib/common.bash): Background_error runs it
+        # while the live 'tail -f' is still alive, so the remount is visible in the
+        # terminal (not only in the log file); the EXIT trap in bin/ covers any abort
+        # that bypasses Background_error. Single-quoted on purpose: expanded at fire
+        # time, so it reflects whatever UNMOUNTED_LIST holds at that moment.
+        # Deliberately does NOT remount all of IMPACTED_DATASETS — only what this
+        # invocation's own umount step touched, so a dataset left unmounted for an
+        # unrelated, intentional reason is never disturbed.
+        # shellcheck disable=SC2016  # deliberate: must expand at eval time, not now
+        Register_cleanup 'l_Toggle_mounts "mount" "${UNMOUNTED_LIST[@]}"'
 
         # --- Run zfs_autobackup ---
         cd "${ZFS_AUTOBACKUP_PATH}" || Background_error "ERROR: Cannot cd into ${ZFS_AUTOBACKUP_PATH}"
@@ -131,7 +137,7 @@ function Perform_filesystem_replication() {
         cd - >/dev/null || Background_error "ERROR: Failed to cd back after zfs_autobackup run."
 
         l_Toggle_mounts "mount" "${UNMOUNTED_LIST[@]}"
-        trap - EXIT
+        Unregister_cleanup
     }
 
     local SCOPE="$1"

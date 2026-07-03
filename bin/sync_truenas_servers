@@ -75,6 +75,13 @@ source "${SCRIPT_DIR}/../lib/snap_rollup.bash"
 # shellcheck source=lib/rep_vms.bash
 source "${SCRIPT_DIR}/../lib/rep_vms.bash"
 
+# Safety net: any exit that bypasses Background_error still runs the registered
+# cleanups and kills the tail (see CLEANUP_COMMAND_STACK / Kill_tail in
+# lib/common.bash). Background_error runs both itself (emptying the stack and
+# clearing TAIL_PID), so after it this fires as a no-op. Order matters:
+# cleanup output must be written while the tail is still alive to show it.
+trap 'Run_cleanup; Kill_tail' EXIT
+
 # Entry
 Process_command_line_options "$@"
 if [[ "$(id -un)" != "root" ]]; then
@@ -113,7 +120,8 @@ if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
       cat "${LOG_FILE}"
     } | sendmail "${EMAIL_TO}"
 
-    [[ -n "${TAIL_PID}" ]] && kill "${TAIL_PID}"
+    # No explicit tail kill here: the 'exit 0' below fires the EXIT trap,
+    # which runs Kill_tail (and the cleanup stack, empty on this path).
 else
     echo "Starting ${SCRIPT_FILENAME} in the background (logfile = ${LOG_FILE})."
     nohup "$0" --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"  >>"${LOG_FILE}" 2>&1 & { sleep 1; tail -f "${LOG_FILE}"; }

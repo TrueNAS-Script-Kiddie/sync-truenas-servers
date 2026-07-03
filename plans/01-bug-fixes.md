@@ -301,10 +301,10 @@ afterward confirmed it genuinely happened. Root cause: `Background_error`
 `echo`s run, the `tail -f` that streams the log to your terminal is already
 dead. The remount's output still reaches the actual log **file** (a separate
 `>>` redirect, unaffected by the tail being killed) — just not the live view.
-Not a functional bug, and not fixed here (would mean reordering
-`Background_error`'s kill/exit sequence, a bigger change than this warrants
-right now) — but worth knowing: check the log file directly, not just what
-scrolled past live, when diagnosing a future failure.
+**Fixed later the same day** — see item 14's "Follow-up" note: the cleanup
+now runs *inside* `Background_error`, before the tail is killed, so its
+output is visible live; the EXIT trap remains only as the safety net for
+exits that bypass `Background_error`.
 
 ## 13. Diagnostics on `zfs_autobackup`'s own failure — [lib/rep_filesystems.bash:88-113](../lib/rep_filesystems.bash#L88-L113) — ✅ DONE (2026-07-03)
 
@@ -379,30 +379,73 @@ should ever get remounted, and the fix needs to guarantee that specific
 remount happens even when `Background_error` aborts before reaching it —
 not redefine what should be remounted.
 
-**Fix — `trap ... EXIT`, scoped to exactly what this invocation unmounted:**
+**Fix — guaranteed cleanup, scoped to exactly what this invocation unmounted.**
+Originally implemented as a local `trap 'l_Toggle_mounts "mount"
+"${UNMOUNTED_LIST[@]}"' EXIT` registered right after the umount and cleared
+(`trap - EXIT`) after the normal-path remount. **Follow-up (2026-07-03,
+later same day): generalized into a shared `CLEANUP_COMMAND` mechanism** to
+fix the visibility quirk found during the kill-test (see item 12's
+"Confirmed live" note — the trap fired only *after* `Background_error` had
+already killed the live `tail -f`, so the remount was invisible on the
+terminal). Current implementation:
+
+- `lib/common.bash` declares a **LIFO cleanup stack**
+  (`CLEANUP_COMMAND_STACK`) with `Register_cleanup '<command>'` /
+  `Unregister_cleanup` (pop) / `Run_cleanup` (pop-and-eval newest-first
+  until empty). Each entry is **popped BEFORE eval**, so a cleanup that
+  itself fails into `Background_error` doesn't recurse forever — and the
+  recursive `Run_cleanup` call continues with the *remaining* entries, so
+  e.g. a failed remount can no longer prevent a registered VM restart from
+  running. `Background_error` calls `Run_cleanup` first, *before* killing
+  the tail — so restore output is visible live.
+- `lib/common.bash` also gained `Kill_tail` (sleep, kill, then clear
+  `TAIL_PID` so a second call is a no-op). **This is deliberately NOT a
+  stack entry**: the stack holds "restore external state this run changed"
+  (exists only during risky sections, must not fire after a successful
+  explicit restore), while the tail kill is the script's own logging-plumbing
+  teardown — it must run on **every** exit, success included, and always
+  **last**, after all restore output was written where the tail could still
+  stream it. Same exit path, fixed ordering, different category.
+- `bin/sync_truenas_servers` registers `trap 'Run_cleanup; Kill_tail' EXIT`
+  once, globally — the safety net for any exit that *bypasses*
+  `Background_error`. This also fixed a **second latent bug** found while
+  reviewing (2026-07-04): a bare `exit` used to leave the foreground
+  `tail -f` running forever — a hung terminal — because only
+  `Background_error` and the normal-completion path ever killed it. Now
+  every exit does. The old explicit kill at the end of the normal path was
+  removed (the trap covers it); double-fire is impossible since
+  `Run_cleanup` empties the stack and `Kill_tail` clears `TAIL_PID` on
+  first execution.
+- `lib/rep_filesystems.bash` registers instead of trapping:
 
 ```bash
 l_Toggle_mounts "umount" "${IMPACTED_DATASETS[@]}"
 
-trap 'l_Toggle_mounts "mount" "${UNMOUNTED_LIST[@]}"' EXIT
+Register_cleanup 'l_Toggle_mounts "mount" "${UNMOUNTED_LIST[@]}"'
 
 # --- Run zfs_autobackup ---
 ...
 l_Toggle_mounts "mount" "${UNMOUNTED_LIST[@]}"
-trap - EXIT
+Unregister_cleanup
 ```
 
-Since the trap string is single-quoted, `${UNMOUNTED_LIST[@]}` is expanded
-at *fire* time, not registration time — so it correctly reflects whatever
-`UNMOUNTED_LIST` had accumulated at the moment of failure (including a
-partial umount loop that itself hit `Background_error` partway through).
-The trap covers every abort path in this section, not just the
-`zfs_autobackup` failure — the `cd -` failure a few lines later is covered
-too. Cleared (`trap - EXIT`) once the normal-path remount succeeds, so it
-can't linger into a *later*, unrelated invocation of this same function
-later in the same script run (it's called once per scope, and again for VM
-zvol replication) — confirmed no other `trap` exists anywhere else in this
-codebase to accidentally clobber.
+Since the command string is single-quoted, `${UNMOUNTED_LIST[@]}` is
+expanded at *fire* time (inside `Run_cleanup`'s `eval`), not at
+registration — so it correctly reflects whatever `UNMOUNTED_LIST` had
+accumulated at the moment of failure (including a partial umount loop that
+itself hit `Background_error` partway through). The cleanup covers every
+abort path in this section, not just the `zfs_autobackup` failure —
+including `Background_error` calls from deep inside helpers
+(`Execute_command`, `Resolve_pool`) that know nothing about datasets, which
+is precisely why this is a global registry rather than an argument passed
+to `Background_error`. Popped (`Unregister_cleanup`) once the normal-path
+remount succeeds, so it can't linger into a *later*, unrelated invocation
+of this same function in the same script run (it's called once per scope,
+and again for VM zvol replication). **Nesting is supported** (that's why
+it's a stack, not a single slot — upgraded 2026-07-04): plan 09's VM
+stop/restart registers an outer entry that survives the filesystem
+replication's inner register/unregister cycle, and on an abort the
+remounts run before the VM restart, innermost-first, exactly as required.
 
 **This fix does NOT retroactively repair the six datasets already stuck
 unmounted from today's incident** — that needed a manual, out-of-band fix:
@@ -432,9 +475,9 @@ It only prevents the *same* failure mode from recurring on future runs.
    see plan 08 for why that turned out to be a red herring, not the root
    cause); item 14's trap correctly remounted every dataset this run itself
    had unmounted, confirmed via `zfs list -o name,mounted` afterward. One
-   visibility quirk found, not a bug — see item 12's "Confirmed live" note
-   above for why the remount doesn't show up on the live terminal (only in
-   the log file). Item 12 itself (pre-flight umount failure) still hasn't
+   visibility quirk found (remount output reached the log file but not the
+   live terminal) — since fixed by the `CLEANUP_COMMAND` mechanism, see
+   item 14's follow-up note. Item 12 itself (pre-flight umount failure) still hasn't
    been observed to fire — that path remains untested but is low-risk/
    low-likelihood by construction.
 3. Item 14 — the deliberate kill-test above also validated the "don't touch

@@ -477,20 +477,26 @@ every time, that confirms it's noise. Until then, treat the target side as
 the primary place to look, and the source side as still-open, secondary
 data to collect.
 
-**Visibility quirk found during this same test, not a bug:** the item 14
-remount didn't appear on the live terminal, even though it demonstrably
-happened (confirmed via `zfs list` right after). Cause: `Background_error`
-(`lib/common.bash`) kills the `tail -f` that streams the log to your
-terminal **before** calling `exit` — and it's `exit` that fires the `EXIT`
-trap doing the remount. So the trap's own `echo` output is written to the
-log **file** just fine (a separate, still-open `>>` redirect), but arrives
-after the live-streaming `tail` is already dead, so it never reaches the
-terminal. Not fixed (would mean reordering `Background_error`'s kill/exit
-sequence — bigger than this warrants right now) — just: **check the log
-file directly**, not only what scrolled past live, when diagnosing a
-future failure. This applies to both the trap's remount output and, more
-importantly, could apply to diagnostic output too if a failure happens to
-race the tail's death — worth keeping in mind either way.
+**Visibility quirk found during this same test — since FIXED (2026-07-03,
+later same day):** the item 14 remount didn't appear on the live terminal,
+even though it demonstrably happened (confirmed via `zfs list` right
+after). Cause: `Background_error` (`lib/common.bash`) kills the `tail -f`
+that streams the log to your terminal **before** calling `exit` — and it's
+`exit` that fires the `EXIT` trap doing the remount. So the trap's `echo`
+output reached the log **file** (a separate, still-open `>>` redirect) but
+never the terminal. **Fix:** the local trap was generalized into a shared
+**LIFO cleanup stack** (`Register_cleanup`/`Unregister_cleanup`/`Run_cleanup`
+in `lib/common.bash`, upgraded from a single slot to a stack on 2026-07-04
+so nested restore scenarios — plan 09's VM restart around the filesystem
+remounts — compose correctly). `Background_error` now runs the registered
+cleanups itself, *before* killing the tail (restore output visible live),
+and a single global `trap 'Run_cleanup; Kill_tail' EXIT` in
+`bin/sync_truenas_servers` remains as the safety net for any exit that
+bypasses `Background_error` — which also fixed a second latent bug: a bare
+`exit` used to leave the foreground `tail -f` hanging forever. Entries are
+popped before eval, so whichever path fires first wins, double-runs are
+impossible, and a failing cleanup can't block the remaining ones. See plan
+01 item 14's follow-up note for the full mechanism.
 
 **Formatting improvement (2026-07-03):** the original diagnostic dump (item
 12/13) was flat, unindented `echo`/command output with no visual separation
