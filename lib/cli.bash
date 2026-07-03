@@ -104,9 +104,11 @@ function Process_command_line_options() {
             PERFORM_ROLLUP="true"
             ;;
         --app=*)
+            # shellcheck disable=SC2076  # deliberate literal-substring match, not regex
             [[ ! " ${APP_LIST[*]} " =~ " ${OPTION#--app=} " ]] && APP_LIST+=( "${OPTION#--app=}" )
             ;;
         --vm=*)
+            # shellcheck disable=SC2076  # deliberate literal-substring match, not regex
             [[ ! " ${VM_LIST[*]} " =~ " ${OPTION#--vm=} " ]] && VM_LIST+=( "${OPTION#--vm=}" )
             ;;
         --running_in_background)

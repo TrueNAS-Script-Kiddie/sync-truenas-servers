@@ -74,6 +74,7 @@ function Perform_filesystem_replication() {
         # --- Run zfs_autobackup ---
         cd "${ZFS_AUTOBACKUP_PATH}" || Background_error "ERROR: Cannot cd into ${ZFS_AUTOBACKUP_PATH}"
         echo "  ${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}"
+        # shellcheck disable=SC2086  # deliberately unquoted: each *_OPTARGS var holds multiple space-separated CLI flags that must word-split into separate arguments
         if ${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}; then
             echo "  ZFS Replication completed successfully"
         else

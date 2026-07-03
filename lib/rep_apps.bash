@@ -50,6 +50,7 @@ function Control_app_with_checks() {
         PERFORM_ACTION=0
         case "${ACTION}" in
           start)
+            # shellcheck disable=SC2076  # elif below is a deliberate literal-substring match, not regex (APP_NAME may contain regex metacharacters)
             if [[ ! "${APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
                 echo "WARNING: ${FULL_APP_NAME} cannot be started because its state is not 'STOPPED' or 'CRASHED'. It is ${APP_STATE}."
             elif [[ " ${STOPPED_LIST[@]} " =~ " ${APP_NAME} " ]]; then

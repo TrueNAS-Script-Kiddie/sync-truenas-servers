@@ -79,6 +79,7 @@ function Extract_vm_definitions() {
         ALL_VM_JSON="$(Execute_command "${LOCATION}" "midclt call vm.query" 2>/dev/null)" \
             || Background_error "ERROR: truenas-${SERVER_ID} - Failed to extract VM definitions"
 
+        # shellcheck disable=SC2034  # nameref write-through to SOURCE_ALL_VM_JSON/TARGET_ALL_VM_JSON; shellcheck can't resolve the dynamically-named target
         SOURCE_OR_TARGET_ALL_VM_JSON_REF="${ALL_VM_JSON}"
 
         if jq -e 'length == 0' <<<"${ALL_VM_JSON}" >/dev/null; then
@@ -749,6 +750,7 @@ function Perform_vm_replication() {
     # Post-loop: check if all requested VMs were actually processed
     if [[ "${#VM_LIST[@]}" -gt 0 ]]; then
         for REQ in "${VM_LIST[@]}"; do
+            # shellcheck disable=SC2076  # deliberate literal-substring match, not regex
             if [[ ! " ${PROCESSED_VM_LIST[*]} " =~ " ${REQ} " ]]; then
                 echo "Requested VM '${REQ}' not found on source"
                 ((NOTFOUND++))

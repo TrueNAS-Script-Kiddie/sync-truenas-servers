@@ -139,17 +139,17 @@ shellcheck applies a directive to the whole following block when it precedes
 a block-opening keyword, not just one physical line. One comment, not four.
 
 **Verified 2026-07-03:** `shellcheck -x lib/cli.bash` now reports only the
-two already-documented SC2076 false positives (item 3e) — all seven SC2034
+two already-documented SC2076 false positives (item 3d) — all seven SC2034
 hits are gone.
 
 This also means the general "structural, applies to every `lib/*.bash` file"
 framing in the original text was **overstated** — it doesn't apply broadly,
 only to variables genuinely never read in their own defining file. No other
 `lib/*.bash` file in this codebase hit that condition in the full-coverage
-pass (section 4 below covers the two remaining SC2034-shaped findings —
-`SOURCE_OR_TARGET_ALL_VM_JSON_REF` and `TARGET_VM_JSON_FILE` — and neither is
-this same cause: one's a nameref-resolution limitation, the other is a
-genuinely dead variable).
+pass (item 3f below covers the remaining SC2034-shaped nameref finding,
+`SOURCE_OR_TARGET_ALL_VM_JSON_REF`; section 5's table covers
+`TARGET_VM_JSON_FILE` — and neither is this same cause: one's a
+nameref-resolution limitation, the other is a genuinely dead variable).
 
 ---
 
@@ -367,23 +367,52 @@ Not worth a dedicated pass on its own.
 
 ---
 
-## 3. False positives — no action needed (documented so they aren't "fixed" incorrectly)
+## 3. False positives — silenced with targeted `# shellcheck disable=` comments
 
-### 3a. `rep_apps.bash:55` — SC2076 "remove quotes from RHS of =~"
+A `# shellcheck disable=CODE` directive only suppresses the **named check
+code** on the line(s) it covers — verified empirically (a test file with a
+disabled SC2034 still correctly reported an unrelated SC2116/SC2086 on the
+very same line). It is never a blanket "stop checking this line" switch, so
+adding one here doesn't hide anything else that might go wrong on these
+lines in the future.
+
+One placement gotcha, hit and fixed while doing this: **a directive is only
+valid immediately before a complete compound command** (an `if`, a `case`, a
+standalone `[[ ]] && ...` statement) — **not** before an `elif` branch mid-way
+through one. Placing it before an `elif` is a shellcheck **parse error**, not
+just a missed suppression (confirmed live via the IDE's diagnostics: "not in
+front of complete compound commands... not e.g. individual 'elif' branches").
+Where the false positive was on an `elif` line, the directive had to go above
+the *opening* `if` instead — which correctly extends to cover every branch,
+`elif` included.
+
+### 3a. `rep_apps.bash:55` — SC2076 "remove quotes from RHS of =~" — ✅ DONE (2026-07-03)
 
 ```bash
 elif [[ " ${STOPPED_LIST[@]} " =~ " ${APP_NAME} " ]]; then
 ```
 
 Shellcheck suggests removing the quotes so `=~` treats the RHS as a regex.
-**Do not do this.** The quoting here is deliberate: it forces `=~` into a
-*literal substring* match instead of a regex match, which matters because
-`APP_NAME` comes from `config/apps.json` and could contain characters that
-are regex metacharacters (`.`, `+`, etc.) without being intended as one. This
-is the same idiom used (correctly) in `cli.bash:107,110`. Only item 2a above
-(the `[@]`→`[*]` swap) is worth doing here; leave the quoting as-is.
+**This would have been wrong to apply.** The quoting here is deliberate: it
+forces `=~` into a *literal substring* match instead of a regex match, which
+matters because `APP_NAME` comes from `config/apps.json` and could contain
+characters that are regex metacharacters (`.`, `+`, etc.) without being
+intended as one. This is the same idiom used (correctly) in `cli.bash:107,110`.
 
-### 3b. `bin/sync_truenas_servers:108` — SC2094 "read and write the same file in the same pipeline"
+**Applied:** since the flagged line is an `elif`, the directive had to go
+above the opening `if` two lines earlier (see the placement note above):
+
+```bash
+# shellcheck disable=SC2076  # elif below is a deliberate literal-substring match, not regex (APP_NAME may contain regex metacharacters)
+if [[ ! "${APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
+    ...
+elif [[ " ${STOPPED_LIST[@]} " =~ " ${APP_NAME} " ]]; then
+```
+
+Item 2a's `[@]`→`[*]` fix is still separately worth doing here — that's about
+consistency (SC2199), not this directive.
+
+### 3b. `bin/sync_truenas_servers:108` — SC2094 "read and write the same file in the same pipeline" — not yet silenced, deferred to plan 02
 
 ```bash
 nohup $0 ... >>"${LOG_FILE}" 2>&1 & { sleep 1; tail -f "${LOG_FILE}"; }
@@ -393,48 +422,48 @@ This isn't a `sort file > file`-style clobber. It's two separate processes —
 the backgrounded child **appending** to `LOG_FILE` and the foreground
 `tail -f` **following** it — which is exactly the intended live-log-streaming
 design. Shellcheck's heuristic just sees the same filename twice in one
-compound command line and flags it defensively. No change needed.
+compound command line and flags it defensively.
 
-### 3c. `bin/sync_truenas_servers:76` — SC2009 "consider pgrep instead of grepping ps"
+Also a genuine false positive, but **deliberately not disabled yet**: this
+exact line is scheduled to be rewritten by [plan 02 item 2](02-safety-and-notifications.md)
+(adding `flock`). Add the disable comment when that rewrite happens, not
+before — otherwise it's an edit now and a re-verification later on a line
+that's about to change anyway.
 
-```bash
-TAIL_PID="$(ps -ef | grep "tail -f ${LOG_FILE}" | grep -v grep | awk '{print $2}')"
-```
-
-Valid modernization suggestion, not a bug — the current `grep -v grep`
-self-match guard already handles the classic pitfall. Optional cleanup, not
-worth doing on its own:
-
-```bash
-TAIL_PID="$(pgrep -f "tail -f ${LOG_FILE}")"
-```
-
-Skip unless you're already touching this line for another reason (e.g. plan
-02 item 2 touches the surrounding block).
-
-### 3d. All SC2034 "appears unused" findings, and the SC1091 findings that cause them
+### 3c. All SC2034 "appears unused" findings, and the SC1091 findings that cause them
 
 Covered by item 1 above — these are the false-positive cascade, not
-independent findings. `REMOTE_STOPPED_LIST`/`LOCAL_STOPPED_LIST` in
-`rep_apps.bash:148-149` are the one exception worth a note: those *are*
-real dynamic-scoping usages (via `eval`/indirect expansion in
-`Control_app_with_checks`), which is precisely the pattern plan 04 item 5
-replaces with namerefs. Doing plan 04 item 5 will make shellcheck understand
-the usage natively (namerefs are far more transparent to static analysis
-than `eval` + indirect `${!VAR}` expansion) — another point in favor of that
-refactor, beyond the readability win already described there.
+independent findings.
 
-### 3e. `cli.bash:107,110` and `rep_vms.bash:752` — SC2076 "remove quotes from RHS of =~"
+`REMOTE_STOPPED_LIST`/`LOCAL_STOPPED_LIST` in `rep_apps.bash:148-149` are the
+one exception worth a note, and **deliberately not disabled either**: those
+*are* real dynamic-scoping usages (via `eval`/indirect expansion in
+`Control_app_with_checks`), which is precisely the pattern
+[plan 04 item 5](04-simplifications.md) replaces with namerefs. That refactor
+makes shellcheck understand the usage *natively* — no disable comment needed
+at all once it lands, so adding one now would just mean remembering to remove
+it later. Same reasoning as 3b: skip the stopgap, let the real fix land.
 
-Same class as 3a, same rationale, same "do not fix": these are the two
-places that already use the *correct* `[*]` form of the space-padded
-membership-test idiom (`cli.bash:107,110` is in fact what item 2a's fix in
-`rep_apps.bash` is matching *toward*), and `rep_vms.bash:752`
+### 3d. `cli.bash:107,110` and `rep_vms.bash:752` — SC2076 "remove quotes from RHS of =~" — ✅ DONE (2026-07-03)
+
+Same class as 3a, same rationale: these were already the *correct* `[*]` form
+of the space-padded membership-test idiom (`cli.bash:107,110` is in fact what
+item 2a's fix in `rep_apps.bash` is matching *toward*), and `rep_vms.bash:752`
 (`[[ ! " ${PROCESSED_VM_LIST[*]} " =~ " ${REQ} " ]]`) is another correct
 instance of the same pattern. Shellcheck's SC2076 suggestion is generically
-wrong for this idiom regardless of `[@]` vs `[*]` — leave all three as-is.
+wrong for this idiom regardless of `[@]` vs `[*]`.
 
-### 3f. `rep_filesystems.bash:77` — SC2086 on the `zfs_autobackup` invocation — DO NOT "fix"
+**Applied:** all three are standalone `[[ ]]`/`if [[ ]]` statements (not
+`elif` branches), so a directive directly above each was valid without the
+3a workaround:
+
+```bash
+# shellcheck disable=SC2076  # deliberate literal-substring match, not regex
+[[ ! " ${APP_LIST[*]} " =~ " ${OPTION#--app=} " ]] && APP_LIST+=( "${OPTION#--app=}" )
+```
+(and identically for the `--vm=*` case in `cli.bash`, and for the `if [[ ... ]]` in `rep_vms.bash:752`.)
+
+### 3e. `rep_filesystems.bash:77` — SC2086 on the `zfs_autobackup` invocation — DO NOT "fix" the quoting; ✅ disable comment added (2026-07-03)
 
 ```bash
 if ${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}; then
@@ -448,12 +477,20 @@ space-separated CLI flags** (e.g.
 deliberately left unquoted so the shell word-splits them into separate
 arguments to `zfs_autobackup`. Quoting any of them — the shellcheck-suggested
 fix — would pass the whole multi-flag string as one single argument and
-break the invocation. Leave unquoted. (This is the one item in this whole
-plan where "fixing the shellcheck warning" would introduce a real bug where
-none exists today — treat it as the canary for why every item in this
-document was verified against context rather than applied mechanically.)
+break the invocation. (This is the one item in this whole plan where "fixing
+the shellcheck warning" would introduce a real bug where none exists today —
+treat it as the canary for why every item in this document was verified
+against context rather than applied mechanically.)
 
-### 3g. `rep_vms.bash:82` — `SOURCE_OR_TARGET_ALL_VM_JSON_REF` "appears unused" (SC2034) — false positive (dynamic nameref target)
+**Applied — the quoting itself was left untouched**, only a directive was
+added above the line to silence the (incorrect-for-this-case) warning:
+
+```bash
+# shellcheck disable=SC2086  # deliberately unquoted: each *_OPTARGS var holds multiple space-separated CLI flags that must word-split into separate arguments
+if ${ZFS_AUTOBACKUP_COMMAND}${TEST_MODE:+ --test} --verbose ${SSH_OPTARGS} ${SNAPSHOT_OPTARGS} ${ZFS_OPTARGS} ${ZFS_AUTOBACKUP_OPTARGS} ${ZFS_AUTOBACKUP_TASK_OPTARGS}; then
+```
+
+### 3f. `rep_vms.bash:82` — `SOURCE_OR_TARGET_ALL_VM_JSON_REF` "appears unused" (SC2034) — false positive (dynamic nameref target) — ✅ DONE (2026-07-03)
 
 ```bash
 local -n SOURCE_OR_TARGET_ALL_VM_JSON_REF="${SOURCE_OR_TARGET}_ALL_VM_JSON"
@@ -467,13 +504,53 @@ constructed** target name (`"${SOURCE_OR_TARGET}_ALL_VM_JSON"`, resolving to
 nameref writes through to that global, which is read extensively elsewhere
 (`lib/rep_vms.bash:335,372,397,404,416,480,708` — confirmed by grep).
 Shellcheck can't resolve a nameref whose target name is itself a variable
-expansion, so it can't see the write-through counts as a use. No fix needed
-— this is the nameref-specific sibling of the item 1b phenomenon (shellcheck
-losing track of dynamic cross-references), not a dead-code bug.
+expansion, so it can't see the write-through counts as a use — this is the
+nameref-specific sibling of the item 1b phenomenon (shellcheck losing track
+of dynamic cross-references), not a dead-code bug.
+
+**Applied:**
+
+```bash
+# shellcheck disable=SC2034  # nameref write-through to SOURCE_ALL_VM_JSON/TARGET_ALL_VM_JSON; shellcheck can't resolve the dynamically-named target
+SOURCE_OR_TARGET_ALL_VM_JSON_REF="${ALL_VM_JSON}"
+```
+
+**Verified 2026-07-03 (all of 3a/3d/3e/3f):** `shellcheck -x` on
+`rep_apps.bash`, `cli.bash`, `rep_vms.bash`, and `rep_filesystems.bash` no
+longer reports any of these; `bash -n` confirms all four files remain
+syntactically valid. Every other finding still shown in those files is
+already accounted for in section 2 or section 5 below — nothing new,
+nothing missed.
 
 ---
 
-## 4. Findings already tracked by other plans (no new action — cross-referenced here for completeness)
+## 4. Valid suggestions, deliberately deferred (NOT false positives)
+
+Unlike section 3, shellcheck is **correct** about these — they just aren't
+worth acting on right now. Don't disable these: a `disable` comment asserts
+"this warning is wrong," and for these it isn't. Leaving them visible is
+intentional, not an oversight.
+
+### 4a. `bin/sync_truenas_servers:76` — SC2009 "consider pgrep instead of grepping ps"
+
+```bash
+TAIL_PID="$(ps -ef | grep "tail -f ${LOG_FILE}" | grep -v grep | awk '{print $2}')"
+```
+
+Valid modernization suggestion — the current `grep -v grep` self-match guard
+already handles the classic pitfall, so there's no bug, just a cleaner idiom
+available:
+
+```bash
+TAIL_PID="$(pgrep -f "tail -f ${LOG_FILE}")"
+```
+
+Skip unless you're already touching this line for another reason (e.g. plan
+02 item 2 touches the surrounding block).
+
+---
+
+## 5. Findings already tracked by other plans (no new action — cross-referenced here for completeness)
 
 These showed up in the full-codebase shellcheck pass but duplicate something
 already scheduled elsewhere. Listed so this plan can claim complete coverage
@@ -492,17 +569,23 @@ without re-describing the fix twice.
 
 ## Verification checklist
 
-1. Apply item 1 (source directives) and item 1b (canonical lint command
-   doc line); re-run `shellcheck -x bin/sync_truenas_servers` — confirm the
-   SC1091/SC2034 cascade is gone (already verified 2026-07-03).
-2. Apply 2a–2j individually; `bash -n` after each. 2d and 2f touch the Immich
+1. Item 1 (source directives), item 1a (`EMAIL_TO` disables), and item 1b
+   (`cli.bash` disables) are done and verified (2026-07-03):
+   `shellcheck -x bin/sync_truenas_servers` and `shellcheck -x lib/cli.bash`
+   both confirmed clean of the cascade.
+2. Section 3 (3a, 3d, 3e, 3f) done and verified (2026-07-03): `shellcheck -x`
+   on `rep_apps.bash`, `cli.bash`, `rep_vms.bash`, `rep_filesystems.bash` all
+   confirmed clean of these specific findings; `bash -n` confirmed all four
+   still parse. 3b and 3c were deliberately left undisabled — see their
+   entries for why (each rides along with a different plan's real fix).
+3. Apply 2a–2j individually; `bash -n` after each. 2d and 2f touch the Immich
    DB path specifically — after those two, do a real (or `--test`)
    `app_replication` run for `immich` and confirm the log preview lines and
    backup/restore both still succeed.
-3. Full `--test --task=master_to_backup` run after all of section 2 — behavior
+4. Full `--test --task=master_to_backup` run after all of section 2 — behavior
    must be unchanged (none of 2a/2b/2c/2e/2g/2h/2j alter semantics under
    normal input; 2c/2d/2g only change behavior on an already-fatal-in-practice
    failure mode; 2f/2i are log-text/robustness only).
-4. Do **not** apply the 3f "fix" — verify by running `--test` after any other
+5. Do **not** apply the 3e "fix" — verify by running `--test` after any other
    change in `rep_filesystems.bash` that the `zfs_autobackup` command line in
    the log still shows multiple separate flags, not one long quoted blob.
