@@ -304,9 +304,11 @@ function Cleanup_vm_disk_tags() {
     if [[ ${#TAGGED_DATASET_LIST[@]} -gt 0 ]]; then
         echo "Cleaning up the 'autobackup'-tag on all datasets..."
         for DS in "${TAGGED_DATASET_LIST[@]}"; do
-            Execute_command "${SOURCE_LOCATION}" "zfs inherit autobackup:${TASK_SCOPE} \"${DS}\"" \
-                && echo "  'autobackup:${TASK_SCOPE}'-tag removed from '${DS}'" \
-                || Background_error "ERROR: Failed to remove 'autobackup:${TASK_SCOPE}'-tag from ${DS}"
+            if Execute_command "${SOURCE_LOCATION}" "zfs inherit autobackup:${TASK_SCOPE} \"${DS}\""; then
+                echo "  'autobackup:${TASK_SCOPE}'-tag removed from '${DS}'"
+            else
+                Background_error "ERROR: Failed to remove 'autobackup:${TASK_SCOPE}'-tag from ${DS}"
+            fi
         done
         echo
     fi
@@ -338,7 +340,7 @@ function Tag_vm_disks() {
     # Iterate the array (no stdin involved)
     for DEVNODE_DISK_PATH in "${DISK_PATHS[@]}"; do
         if [[ "${DEVNODE_DISK_PATH}" == "/dev/zvol/${POOL_NAME}/encrypted-ds/vm-ds/"* ]]; then
-            REL_DISK_PATH="${DEVNODE_DISK_PATH#/dev/zvol/${POOL_NAME}/}"
+            REL_DISK_PATH="${DEVNODE_DISK_PATH#/dev/zvol/"${POOL_NAME}"/}"
             ZFS_DISK_PATH="${POOL_NAME}/${REL_DISK_PATH}"
 
             # Ensure commands don’t read from stdin even if wrappers do
@@ -410,7 +412,7 @@ function Audit_and_cleanup_vm_storage() {
     for TARGET_VM_PATH in "${TARGET_VM_PATH_LIST[@]}"; do
         # skip if target path is present in source (loop element‑wise, space‑safe)
         for REL_SOURCE_VM_PATH in "${SOURCE_VM_PATH_LIST[@]#*/${SOURCE_POOL}/}"; do
-            [[ "${REL_SOURCE_VM_PATH}" == "${TARGET_VM_PATH#*/${TARGET_POOL}/}" ]] && continue 2   # jump to next TARGET_VM_PATH
+            [[ "${REL_SOURCE_VM_PATH}" == "${TARGET_VM_PATH#*/"${TARGET_POOL}"/}" ]] && continue 2   # jump to next TARGET_VM_PATH
         done
 
         # skip if more than one VM on target references it

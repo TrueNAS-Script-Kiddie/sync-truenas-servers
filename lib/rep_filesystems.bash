@@ -81,7 +81,7 @@ function Perform_filesystem_replication() {
             Background_error "ERROR: ZFS Replication failed"
         fi
         echo
-        cd - >/dev/null
+        cd - >/dev/null || Background_error "ERROR: Failed to cd back after zfs_autobackup run."
 
         l_Toggle_mounts "mount" "${UNMOUNTED_LIST[@]}"
     }
@@ -115,7 +115,7 @@ function Perform_filesystem_replication() {
     fi
 
     mapfile -t IMPACTED_DATASETS < <(
-        Execute_command $([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote) \
+        Execute_command "$([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote)" \
             "zfs list -H -o name \
             | xargs zfs get -o name,property all \
             | grep \" autobackup:${TASK_SCOPE}\" \

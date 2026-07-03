@@ -3,7 +3,9 @@
 
 # Resolve paths
 declare SCRIPT_FILENAME="$(basename "$0")"
-declare SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+declare SCRIPT_DIR
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)" \
+    || { echo "ERROR: Failed to resolve SCRIPT_DIR"; exit 1; }
 declare LOG_DIR="${SCRIPT_DIR}/../logs"
 
 [[ ! -d "${LOG_DIR}" ]] && mkdir -p "${LOG_DIR}"
@@ -114,6 +116,6 @@ if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
     [[ -n "${TAIL_PID}" ]] && kill "${TAIL_PID}"
 else
     echo "Starting ${SCRIPT_FILENAME} in the background (logfile = ${LOG_FILE})."
-    nohup $0 --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"  >>"${LOG_FILE}" 2>&1 & { sleep 1; tail -f "${LOG_FILE}"; }
+    nohup "$0" --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"  >>"${LOG_FILE}" 2>&1 & { sleep 1; tail -f "${LOG_FILE}"; }
 fi
 exit 0

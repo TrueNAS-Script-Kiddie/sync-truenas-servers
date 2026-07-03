@@ -7,8 +7,10 @@ function Backup_immich_DB() {
     echo
 
     # Dynamically find container names
-    local CONTAINERS_TO_STOP=( $(Execute_command "${SOURCE_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SOURCE_SERVER_ID}-(server|machine-learning|redis|permissions)-[0-9]+'") )
-    local CONTAINERS_TO_START=( $(Execute_command "${SOURCE_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SOURCE_SERVER_ID}-pgvecto-[0-9]+'") )
+    local -a CONTAINERS_TO_STOP
+    mapfile -t CONTAINERS_TO_STOP < <(Execute_command "${SOURCE_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SOURCE_SERVER_ID}-(server|machine-learning|redis|permissions)-[0-9]+'")
+    local -a CONTAINERS_TO_START
+    mapfile -t CONTAINERS_TO_START < <(Execute_command "${SOURCE_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SOURCE_SERVER_ID}-pgvecto-[0-9]+'")
 
     # Make sure Immich is running
     if [[ "$(Execute_command "${SOURCE_LOCATION}" "midclt call app.query | jq -r '.[] | select(.name==\"immich-${SOURCE_SERVER_ID}\") | .state'")" != "RUNNING" ]]; then
@@ -25,13 +27,13 @@ function Backup_immich_DB() {
 
     # Backup the Postgres DB
     echo "Making a backup of the Immich DB to /mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz and moving it from immich-pgdata-ds to immich-data-ds/backups"
-    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: docker exec -i "${CONTAINERS_TO_START[0]}" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
+    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > \"/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz\"'"
     echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\""
     if [[ -z "${TEST_MODE}" ]]; then
-        Execute_command "${SOURCE_LOCATION}" "docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
-        [[ "$?" != "0" ]] && Background_error "ERROR: DB backup failed."
-        Execute_command "${SOURCE_LOCATION}" "mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\""
-        [[ "$?" != "0" ]] && Background_error "ERROR: DB move failed."
+        Execute_command "${SOURCE_LOCATION}" "docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz"'" \
+            || Background_error "ERROR: DB backup failed."
+        Execute_command "${SOURCE_LOCATION}" "mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\"" \
+            || Background_error "ERROR: DB move failed."
     fi
     echo
     echo "### Making a backup of the Immich Postgres DB has completed successfully ###"
@@ -70,8 +72,10 @@ function Restore_immich_DB() {
     echo
 
     # Dynamically find container names
-    local CONTAINERS_TO_STOP=($(Execute_command "${TARGET_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${TARGET_SERVER_ID}-(server|machine-learning|redis|permissions|pgvecto)-[0-9]+'"))
-    local CONTAINERS_TO_START=( $(Execute_command "${TARGET_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${TARGET_SERVER_ID}-pgvecto-[0-9]+'") )
+    local -a CONTAINERS_TO_STOP
+    mapfile -t CONTAINERS_TO_STOP < <(Execute_command "${TARGET_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${TARGET_SERVER_ID}-(server|machine-learning|redis|permissions|pgvecto)-[0-9]+'")
+    local -a CONTAINERS_TO_START
+    mapfile -t CONTAINERS_TO_START < <(Execute_command "${TARGET_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${TARGET_SERVER_ID}-pgvecto-[0-9]+'")
 
     # Stop the containers
     Control_docker_containers "${TARGET_LOCATION}" "stop" "${CONTAINERS_TO_STOP[@]}"
@@ -92,8 +96,8 @@ function Restore_immich_DB() {
     echo "Restoring of the Immich DB from /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz"
     echo "Executing on TrueNAS-${TARGET_SERVER_ID^}: gunzip < \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\" | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich"
     if [[ -z "${TEST_MODE}" ]]; then
-        Execute_command "${TARGET_LOCATION}" "gunzip < /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich --host=localhost" >"${DB_RESTORE_LOG}" 2>&1
-        [[ "$?" != "0" ]] && Background_error "ERROR: DB restore failed. Check ${DB_RESTORE_LOG} for more details."
+        Execute_command "${TARGET_LOCATION}" "gunzip < /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich --host=localhost" >"${DB_RESTORE_LOG}" 2>&1 \
+            || Background_error "ERROR: DB restore failed. Check ${DB_RESTORE_LOG} for more details."
     fi
 
     # Stop Immich completely

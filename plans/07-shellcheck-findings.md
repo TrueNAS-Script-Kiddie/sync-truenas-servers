@@ -153,9 +153,20 @@ nameref-resolution limitation, the other is a genuinely dead variable).
 
 ---
 
-## 2. Real, worth fixing
+## 2. Real, worth fixing — ✅ ALL DONE (2026-07-03)
 
-### 2a. `rep_apps.bash:55` — inconsistent array-join idiom (SC2199)
+All ten items below (2a–2j) were applied and verified via `shellcheck -x` +
+`bash -n` on every touched file (`rep_apps.bash`, `bin/sync_truenas_servers`,
+`immich_db.bash`, `rep_filesystems.bash`, `rep_vms.bash`) — each file now
+shows only findings already tracked elsewhere in this plan or in plans
+01/04, with zero regressions and zero new findings introduced by these
+changes (one small out-of-scope wrinkle surfaced — see the note at the end
+of 2f). TrueNAS-side functional verification (a real `--test` run) still
+needs to happen on an actual host per the checklist below — `bash -n` and
+`shellcheck` only confirm the code parses and lints clean, not that
+`Perform_app_replication`/`midclt`/`zfs` behavior is unchanged.
+
+### 2a. `rep_apps.bash:55` — inconsistent array-join idiom (SC2199) — ✅ DONE
 
 ```bash
 elif [[ " ${STOPPED_LIST[@]} " =~ " ${APP_NAME} " ]]; then
@@ -174,7 +185,7 @@ that doesn't match the established convention. Fix for consistency:
 elif [[ " ${STOPPED_LIST[*]} " =~ " ${APP_NAME} " ]]; then
 ```
 
-### 2b. `bin/sync_truenas_servers:108` — unquoted `$0` (SC2086)
+### 2b. `bin/sync_truenas_servers:108` — unquoted `$0` (SC2086) — ✅ DONE
 
 ```bash
 nohup $0 --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"  >>"${LOG_FILE}" 2>&1 & { sleep 1; tail -f "${LOG_FILE}"; }
@@ -183,12 +194,11 @@ nohup $0 --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"  >>"${LOG_
 If the script is ever invoked via a path containing a space, the unquoted
 `$0` word-splits and breaks re-exec. Fix: quote it — `nohup "$0" ...`.
 
-**Note:** plan 02 item 2 (flock) already rewrites this exact line and
-includes this quote fix as part of that change. If you do plan 02, this is
-already covered — don't do it twice. If you're doing shellcheck cleanup
-*without* plan 02, apply just the quoting here.
+**Applied:** `nohup "$0" ...`. **Note for plan 02:** plan 02 item 2 (flock)
+rewrites this same line to add the lock — when implementing that, keep the
+quoting that's now in place rather than reverting to the unquoted form.
 
-### 2c. `bin/sync_truenas_servers:6` — `SCRIPT_DIR` failure is silent (SC2155, elevated)
+### 2c. `bin/sync_truenas_servers:6` — `SCRIPT_DIR` failure is silent (SC2155, elevated) — ✅ DONE
 
 ```bash
 declare SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
@@ -211,9 +221,12 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)" \
 ```
 
 Leave the other five SC2155 hits alone — fixing them is real but low-value
-churn for no behavior change.
+churn for no behavior change. **Verified:** those five (`SCRIPT_FILENAME`,
+`LOCAL_SERVER_ID`, `EXEC_DATE`, `LOG_FILE`, `DB_RESTORE_LOG`) are exactly
+what `shellcheck -x bin/sync_truenas_servers` still shows post-fix; `SCRIPT_DIR`
+itself no longer appears.
 
-### 2d. `immich_db.bash` — `$?`-based checks on the DB backup/restore path (SC2181) — elevated priority
+### 2d. `immich_db.bash` — `$?`-based checks on the DB backup/restore path (SC2181) — elevated priority — ✅ DONE
 
 ```bash
 Execute_command "${SOURCE_LOCATION}" "docker exec -i ... pg_dumpall ..."
@@ -239,13 +252,12 @@ Execute_command "${SOURCE_LOCATION}" "docker exec -i ... pg_dumpall ..." \
     || Background_error "ERROR: DB backup failed."
 ```
 
-(Same transform for the `mv` at line 34 and the `gunzip | ... | psql` at
-line 96.) The equivalent, lower-stakes instance at
-[lib/rep_vms.bash:253](../lib/rep_vms.bash#L253) (guarding a jq transform,
-not DB safety) is **not** included here — real but much lower priority; skip
-unless you're already restructuring that function.
+**Applied to all three** (backup dump, backup move, restore). The equivalent,
+lower-stakes instance at [lib/rep_vms.bash:254](../lib/rep_vms.bash#L254)
+(guarding a jq transform, not DB safety) was left as-is per the original
+scope — real but much lower priority.
 
-### 2e. `immich_db.bash` — array-from-command-substitution inconsistent with the rest of the codebase (SC2207)
+### 2e. `immich_db.bash` — array-from-command-substitution inconsistent with the rest of the codebase (SC2207) — ✅ DONE
 
 ```bash
 local CONTAINERS_TO_STOP=( $(Execute_command "${SOURCE_LOCATION}" "docker ps -a ... | grep -E '...'") )
@@ -265,9 +277,9 @@ local -a CONTAINERS_TO_STOP
 mapfile -t CONTAINERS_TO_STOP < <(Execute_command "${SOURCE_LOCATION}" "docker ps -a --format '{{.Names}}' | grep -E 'immich-${SOURCE_SERVER_ID}-(server|machine-learning|redis|permissions)-[0-9]+'")
 ```
 
-Apply the same shape to the other three.
+**Applied to all four.**
 
-### 2f. `immich_db.bash:28` — malformed quoting in a log-preview string (SC2027/SC2086)
+### 2f. `immich_db.bash:28` — malformed quoting in a log-preview string (SC2027/SC2086) — ✅ DONE
 
 ```bash
 echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: docker exec -i "${CONTAINERS_TO_START[0]}" bash -c 'pg_dumpall ... > "/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz"'"
@@ -292,7 +304,19 @@ This is the same theme as [plan 01 item 11](01-bug-fixes.md) (echoed preview
 drifting from/misrepresenting the real command in this exact file) — do both
 together if you're already in this function.
 
-### 2g. `rep_filesystems.bash:83` — unchecked `cd -` (SC2164)
+**New wrinkle found while applying this fix, left untouched (out of this
+item's scope):** the *executed* `Execute_command` call two lines below the
+echo (currently [lib/immich_db.bash:33](../lib/immich_db.bash#L33)) has its
+own SC2086 on the same `"/var/lib/postgresql/${EXEC_DATE}_..."` fragment.
+Unlike the echo, this string is a second layer — it's built here, then
+`eval`'d (local) or sent over `ssh` (remote) by `Execute_command`, so a
+*third* shell does the real parsing, and by that point the embedded double
+quotes genuinely do protect the path. Whether shellcheck's complaint is a
+true false positive (same two-layer-eval blind spot as elsewhere in this
+codebase) or worth quoting defensively anyway wasn't triaged — flagging it
+here rather than silently fixing or silently ignoring it.
+
+### 2g. `rep_filesystems.bash:83` — unchecked `cd -` (SC2164) — ✅ DONE
 
 ```bash
 cd - >/dev/null
@@ -306,7 +330,7 @@ fix, matches the project's own error convention:
 cd - >/dev/null || Background_error "ERROR: Failed to cd back after zfs_autobackup run."
 ```
 
-### 2h. `rep_vms.bash:340,412` — unquoted expansion inside a `${VAR#pattern}` removal (SC2295)
+### 2h. `rep_vms.bash:340,412` — unquoted expansion inside a `${VAR#pattern}` removal (SC2295) — ✅ DONE
 
 ```bash
 REL_DISK_PATH="${DEVNODE_DISK_PATH#/dev/zvol/${POOL_NAME}/}"
@@ -327,7 +351,7 @@ REL_DISK_PATH="${DEVNODE_DISK_PATH#/dev/zvol/"${POOL_NAME}"/}"
 [[ "${REL_SOURCE_VM_PATH}" == "${TARGET_VM_PATH#*/"${TARGET_POOL}"/}" ]]
 ```
 
-### 2i. `rep_vms.bash:307` — `A && B || C` is not if/then/else (SC2015) — low priority, informational
+### 2i. `rep_vms.bash:307` — `A && B || C` is not if/then/else (SC2015) — low priority, informational — ✅ DONE
 
 ```bash
 Execute_command "${SOURCE_LOCATION}" "zfs inherit autobackup:${TASK_SCOPE} \"${DS}\"" \
@@ -341,15 +365,15 @@ even though the real operation (removing the ZFS tag) succeeded. In practice
 `echo` failing here would require something like a closed stdout, so the
 real-world risk is near zero — but the consequence (aborting an otherwise-
 successful run on a misleading error) is disproportionate to that risk.
-Low priority; fix by restructuring as `if ... ; then ... ; else ... ; fi` if
-you're touching this function anyway. **Not audited elsewhere** — this exact
-shape likely recurs in other `cmd && echo ... || Background_error` call sites
-across `rep_vms.bash`; shellcheck only flags the instances its heuristics
-catch, so treat this as a spot example of a pattern, not an exhaustive list.
-A full audit of this idiom is out of scope for this plan; consider it for a
-future pass if it's ever bitten in practice.
+**Applied** — restructured as `if ... ; then ... ; else ... ; fi`. **Not
+audited elsewhere** — this exact shape likely recurs in other
+`cmd && echo ... || Background_error` call sites across `rep_vms.bash`;
+shellcheck only flags the instances its heuristics catch, so this was a spot
+fix, not an exhaustive sweep. A full audit of this idiom across the file is
+out of scope for this plan; consider it for a future pass if it's ever
+bitten in practice.
 
-### 2j. `rep_filesystems.bash:117` — unquoted command substitution (SC2046) — optional, near-zero risk
+### 2j. `rep_filesystems.bash:117` — unquoted command substitution (SC2046) — optional, near-zero risk — ✅ DONE
 
 ```bash
 Execute_command $([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote) \
@@ -578,14 +602,17 @@ without re-describing the fix twice.
    confirmed clean of these specific findings; `bash -n` confirmed all four
    still parse. 3b and 3c were deliberately left undisabled — see their
    entries for why (each rides along with a different plan's real fix).
-3. Apply 2a–2j individually; `bash -n` after each. 2d and 2f touch the Immich
-   DB path specifically — after those two, do a real (or `--test`)
-   `app_replication` run for `immich` and confirm the log preview lines and
-   backup/restore both still succeed.
-4. Full `--test --task=master_to_backup` run after all of section 2 — behavior
-   must be unchanged (none of 2a/2b/2c/2e/2g/2h/2j alter semantics under
-   normal input; 2c/2d/2g only change behavior on an already-fatal-in-practice
-   failure mode; 2f/2i are log-text/robustness only).
-5. Do **not** apply the 3e "fix" — verify by running `--test` after any other
+3. Section 2 (2a–2j) done and verified (2026-07-03): `bash -n` and
+   `shellcheck -x` on all five touched files (`rep_apps.bash`,
+   `bin/sync_truenas_servers`, `immich_db.bash`, `rep_filesystems.bash`,
+   `rep_vms.bash`) confirmed every targeted finding is gone, with zero new
+   findings introduced (one small out-of-scope wrinkle noted in 2f).
+   **Still outstanding — real functional verification on a TrueNAS host**:
+   this was a static lint/parse check only; `Backup_immich_DB`/
+   `Restore_immich_DB` (2d/2e/2f) and `zfs_autobackup` invocation (2g/2j)
+   need one real (or `--test`) `app_replication` run for `immich` and one
+   full `--test --task=master_to_backup` run before trusting this in
+   production.
+4. Do **not** apply the 3e "fix" — verify by running `--test` after any other
    change in `rep_filesystems.bash` that the `zfs_autobackup` command line in
    the log still shows multiple separate flags, not one long quoted blob.

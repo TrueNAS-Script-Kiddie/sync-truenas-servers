@@ -13,7 +13,7 @@ replacement snippets, and verification steps.
 | [04-simplifications.md](04-simplifications.md) | Behavior-preserving refactors: direction helper, dead code, `--app` validation at parse time | Medium | Yes, after 01 |
 | [05-python-vm-transform.md](05-python-vm-transform.md) | Optional: port the 140-line jq transform to a small, offline-testable Python script | Medium | Optional |
 | [06-app-definition-replication.md](06-app-definition-replication.md) | App-definition replication via `midclt app.config`/`app.create` (VM-pattern mirror), config convergence, phased name convergence | Medium–High | Yes (phased); closes the real failover gap |
-| [07-shellcheck-findings.md](07-shellcheck-findings.md) | Full-codebase shellcheck triage (every tracked `.bash` file). Root-cause + false-positive disables done and verified (1/1a/1b, 3a/3d/3e/3f); 10 small real fixes remain (2a-2j, one elevated: DB backup/restore path); 3b/3c intentionally left for other plans' real fixes; one valid-but-deferred item kept visible on purpose (4a) | Low | Items 2a-2j remain |
+| [07-shellcheck-findings.md](07-shellcheck-findings.md) | Full-codebase shellcheck triage (every tracked `.bash` file). Everything actionable is done and lint-verified: root-cause fixes (1/1a/1b), all 10 real fixes (2a-2j), all false-positive disables (3a/3d/3e/3f). 3b/3c intentionally left for other plans' real fixes; one valid-but-deferred item kept visible on purpose (4a) | Low | **Needs a real TrueNAS-host `--test` run before trusting in production** — only lint/parse-verified so far |
 
 ## Global guardrails (apply to EVERY plan)
 
