@@ -18,6 +18,8 @@ Bash-based replication orchestrator for a pair of TrueNAS SCALE servers (`truena
 
 Locally they're cloned to `C:\Apps\zfs_autobackup` and `C:\Apps\zfs-rollup` as their own VS Code projects, SFTP-synced to the same sibling layout on the TrueNAS host. When behavior needs verifying beyond what's summarized here, read the source directly at those paths rather than guessing from usage in `lib/`. The local clones are what's actually deployed and may lag the upstream repo — that's expected; treat the local copy as the version of record for understanding current behavior, not the latest upstream.
 
+New-host deploy: SFTP doesn't set the exec bit on new files — `chmod +x bin/sync_truenas_servers` once after first push to a host. Same applies to `zfs-rollup/rollup.py`; `zfs_autobackup` also needs `autobackup-venv/` built fresh (SFTP excludes it) — see those projects' own docs.
+
 ## Key directories
 - [bin/sync_truenas_servers](bin/sync_truenas_servers) — entry point. Resolves paths, sources config + all `lib/` modules, re-execs itself with `--running_in_background` via `nohup`, dispatches subtasks, emails log.
 - [lib/](lib/) — one module per concern. All functions share globals set by the entry script + `cli.bash`.
@@ -30,7 +32,6 @@ Locally they're cloned to `C:\Apps\zfs_autobackup` and `C:\Apps\zfs-rollup` as t
   - [docker.bash](lib/docker.bash) — `Control_docker_containers`, `Wait_for_docker_state`.
   - [immich_db.bash](lib/immich_db.bash) — `Backup_immich_DB` / `Restore_immich_DB` wired as `pre_action` / `post_action` in `apps.json`.
 - [config/](config/) — `apps.json` (app replication spec), `vm_device_mappings.json` (per-dtype path/NIC/display rewrites master↔backup), `config.local.bash` (untracked, provides `EMAIL_TO` + `SSH_CONFIG_FILE`), `config.example.bash` (template).
-- [Makefile](Makefile) — `promote` target rsyncs tracked files (plus `config.local.bash`) from the admin-home source dir to the root-home target dir on the TrueNAS host, with timestamped backup dir for `rollback`.
 - `logs/`, `tmp/` — runtime only (gitignored).
 
 ## Essential commands
@@ -46,11 +47,9 @@ bash -n lib/rep_apps.bash
 # Real run, single subtask / single app or VM
 ./bin/sync_truenas_servers --task=master_to_backup --subtask=app_replication --app=immich
 ./bin/sync_truenas_servers --task=backup_to_master --subtask=vm_replication --vm=VM1 --vm=VM2
-
-# Deploy tracked files from working copy to the TrueNAS deploy dir
-make promote     # = backup + deploy
-make rollback    # restore most-recent backup
 ```
+
+Deploy is via the VS Code SFTP extension (`.vscode/sftp.json`, `backup`/`master` profiles) — no build/deploy script in this repo.
 
 See [lib/cli.bash](lib/cli.bash) (`Help`) for the full option matrix.
 
