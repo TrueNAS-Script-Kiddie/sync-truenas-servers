@@ -115,3 +115,23 @@ function Resolve_pool() {
             ;;
     esac
 }
+
+# Derives the source/target view of the LOCAL_*/REMOTE_* direction model (set by
+# cli.bash from ${TASK}:${LOCAL_SERVER_ID}) into globals every subtask shares:
+#   SOURCE_LOCATION / TARGET_LOCATION   ("local" or "remote")
+#   SOURCE_SERVER_ID / TARGET_SERVER_ID ("master" or "backup")
+# Call once after Process_command_line_options. Pools stay per-module via
+# Resolve_pool (POOL_TYPE differs per subtask). Does not replace the direction
+# model — it is a derived, read-only view on top of it.
+function Resolve_direction() {
+    # shellcheck disable=SC2034  # SOURCE_/TARGET_ globals consumed across lib/*.bash (direction model, see architectural_patterns.md)
+    [[ -n "${LOCAL_SOURCE}" ]] && SOURCE_LOCATION="local" || SOURCE_LOCATION="remote"
+    [[ -n "${LOCAL_TARGET}" ]] && TARGET_LOCATION="local" || TARGET_LOCATION="remote"
+    if [[ "${SOURCE_LOCATION}" == "local" ]]; then
+        SOURCE_SERVER_ID="${LOCAL_SERVER_ID}"
+        TARGET_SERVER_ID="${REMOTE_SERVER_ID}"
+    else
+        SOURCE_SERVER_ID="${REMOTE_SERVER_ID}"
+        TARGET_SERVER_ID="${LOCAL_SERVER_ID}"
+    fi
+}

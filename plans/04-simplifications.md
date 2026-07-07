@@ -13,9 +13,24 @@ timestamps) to a pre-change `--test` run. **Capture that baseline log first.**
 
 The low-risk items — **item 4** and all of **item 7** — are implemented; all
 touched files pass `bash -n`. Still open (larger / needs host verification):
-**item 1** (direction/pool helper refactor), **item 2** (rollup path trick),
-**item 3** (app-list validation), **item 5** (`eval`→nameref), **item 6**
-(`midclt -job`, needs a host).
+**item 2** (rollup path trick), **item 3** (app-list validation),
+**item 5** (`eval`→nameref), **item 6** (`midclt -job`, needs a host).
+
+**Item 1** (direction/pool helper refactor) is done. `Resolve_direction` in
+`common.bash` sets four globals (`SOURCE_LOCATION`/`TARGET_LOCATION`/
+`SOURCE_SERVER_ID`/`TARGET_SERVER_ID`), declared in `bin/` and called once after
+`Process_command_line_options`. Every inline direction re-derivation in
+`rep_apps.bash`, `rep_vms.bash` (prepare-vars + `Rsync_vm_file_disks`),
+`rep_filesystems.bash` (SSH_OPTARGS, `l_Toggle_mounts` override, EXEC_MODE,
+IMPACTED_DATASETS location, failure-diagnostics block) and `snap_rollup.bash`
+(EXEC_MODE + the `${LOCAL_TARGET}${REMOTE_TARGET}` concatenation) now reads
+those globals. `SOURCE_POOL`/`TARGET_POOL` stay per-module (immich DB dynamic
+scoping preserved). **Verified on `truenas-backup` (2026-07-08):** full `--test`
+runs in *both* directions (`master_to_backup` and `backup_to_master`) completed
+with the success banner; confirmed the reverse run flips every touched branch —
+rsync remote prefix moves source↔target, VM/filesystem `--ssh-source`↔
+`--ssh-target`, and rollup switches `local_verbose`↔`remote_verbose` against the
+correct pool.
 
 | # | Where | Change |
 |---|---|---|
@@ -38,7 +53,7 @@ three pools (`ssdmaster-pool`/`master-pool`/`backup-pool`) resolve, so the
 
 ---
 
-## 1. Factor the duplicated direction/pool resolution into one helper
+## 1. Factor the duplicated direction/pool resolution into one helper — ✅ DONE (2026-07-08)
 
 The same ~14-line block appears verbatim in
 [lib/rep_apps.bash:104-117](../lib/rep_apps.bash#L104-L117) and

@@ -84,12 +84,8 @@ function Control_app_with_checks() {
 }
 
 function Perform_app_replication() {
-    local SOURCE_LOCATION
-    local TARGET_LOCATION
     local SOURCE_POOL
     local TARGET_POOL
-    local SOURCE_SERVER_ID
-    local TARGET_SERVER_ID
 
     local FOUND
 
@@ -107,22 +103,9 @@ function Perform_app_replication() {
     local -a APP_DIRS_TO_RSYNC_LIST
     local APP_DIR_TO_RSYNC
 
-    # Prepare vars
-    [[ -n "${LOCAL_SOURCE}" ]] && SOURCE_LOCATION="local" || SOURCE_LOCATION="remote"
-    [[ -n "${LOCAL_TARGET}" ]] && TARGET_LOCATION="local" || TARGET_LOCATION="remote"
-
-    if [[ "${SOURCE_LOCATION}" == "local" ]]; then
-        SOURCE_POOL="$(Resolve_pool "${LOCAL_SERVER_ID}" "fast")"
-        SOURCE_SERVER_ID="${LOCAL_SERVER_ID}"
-        TARGET_POOL="$(Resolve_pool "${REMOTE_SERVER_ID}" "fast")"
-        TARGET_SERVER_ID="${REMOTE_SERVER_ID}"
-    else
-        SOURCE_POOL="$(Resolve_pool "${REMOTE_SERVER_ID}" "fast")"
-        SOURCE_SERVER_ID="${REMOTE_SERVER_ID}"
-        TARGET_POOL="$(Resolve_pool "${LOCAL_SERVER_ID}" "fast")"
-        TARGET_SERVER_ID="${LOCAL_SERVER_ID}"
-    fi
-
+    # Resolve pools from the direction globals (apps live on the fast pool).
+    SOURCE_POOL="$(Resolve_pool "${SOURCE_SERVER_ID}" "fast")"
+    TARGET_POOL="$(Resolve_pool "${TARGET_SERVER_ID}" "fast")"
     [[ -n "${SOURCE_POOL}" && -n "${TARGET_POOL}" ]] || Background_error "ERROR: Failed to resolve source/target pool (source='${SOURCE_POOL}', target='${TARGET_POOL}')."
 
     echo "##########################################"

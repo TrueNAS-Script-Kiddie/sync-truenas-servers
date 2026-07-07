@@ -58,6 +58,14 @@ declare REMOTE_SOURCE
 declare LOCAL_TARGET
 declare REMOTE_TARGET
 
+# Derived source/target view of the direction model, filled by Resolve_direction
+# (lib/common.bash) after option parsing. Shared read-only by every subtask.
+# shellcheck disable=SC2034  # consumed across lib/*.bash (direction model, see architectural_patterns.md)
+declare SOURCE_LOCATION
+declare TARGET_LOCATION
+declare SOURCE_SERVER_ID
+declare TARGET_SERVER_ID
+
 declare -a APP_LIST=()                        # empty means “all Apps"
 declare -a VM_LIST=()                         # empty means “all VMs”
 
@@ -88,6 +96,7 @@ trap 'Run_cleanup; Kill_tail' EXIT
 
 # Entry
 Process_command_line_options "$@"
+Resolve_direction
 if [[ "$(id -un)" != "root" ]]; then
     echo "ERROR: This script can only be run as root"
     exit 1
