@@ -38,8 +38,8 @@ function Help() {
     echo -e "snapshot_rollup\t\t\t\t\t\t\tPerform snapshot rollup (doesn't sync any data)."
     echo
     echo "Allowed apps:"
-    echo -e "immich\t\t\t\t\t\t\t\tLimit the Application Replication subtask to only copy Immich."
-    echo -e "plex\t\t\t\t\t\t\t\tLimit the Application Replication subtask to only copy Plex."
+    jq -r '.apps[].name' "${SCRIPT_DIR}/../config/apps.json" \
+        | while read -r APP; do echo -e "${APP}\t\t\t\t\t\t\t\tLimit the Application Replication subtask to only copy ${APP^}."; done
     echo
 
     exit "${1:-0}"
@@ -159,6 +159,20 @@ function Process_command_line_options() {
     if [[ "${#APP_LIST[@]}" -gt 0 && -z "${PERFORM_APP_REP}" ]]; then
         echo "ERROR: --app can only be used when the app_replication subtask is enabled."
         exit 1
+    fi
+
+    # Reject unknown --app names
+    if [[ "${#APP_LIST[@]}" -gt 0 ]]; then
+        local -a KNOWN_APPS
+        mapfile -t KNOWN_APPS < <(jq -r '.apps[].name' "${SCRIPT_DIR}/../config/apps.json")
+        local REQUESTED_APP KNOWN_APP APP_FOUND
+        for REQUESTED_APP in "${APP_LIST[@]}"; do
+            APP_FOUND="false"
+            for KNOWN_APP in "${KNOWN_APPS[@]}"; do
+                [[ "${REQUESTED_APP}" == "${KNOWN_APP}" ]] && { APP_FOUND="true"; break; }
+            done
+            [[ "${APP_FOUND}" == "true" ]] || { echo "ERROR: Unknown --app '${REQUESTED_APP}'. Known apps: ${KNOWN_APPS[*]}"; exit 1; }
+        done
     fi
 
     # --stop-running-vms is only allowed if $PERFORM_VM_REP=true

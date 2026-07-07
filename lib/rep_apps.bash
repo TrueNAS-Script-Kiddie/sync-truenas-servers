@@ -37,17 +37,17 @@ function Control_app_with_checks() {
 
     local LOCATION
     local SERVER_ID_VAR
-    local STOPPED_LIST_VAR
     local FULL_APP_NAME
     local APP_STATE
-    local -a STOPPED_LIST
     local PERFORM_ACTION=0
 
     for LOCATION in "${LOCATIONS[@]}"; do
+        # nameref onto the caller's LOCAL_/REMOTE_STOPPED_LIST (no eval, no copy).
+        # unset first: 'local -n' can't rebind an existing nameref in some bash.
+        unset -n STOPPED_LIST_REF
+        local -n STOPPED_LIST_REF="${LOCATION^^}_STOPPED_LIST"
         SERVER_ID_VAR="${LOCATION^^}_SERVER_ID"
-        STOPPED_LIST_VAR="${LOCATION^^}_STOPPED_LIST[@]"
         FULL_APP_NAME="${APP_NAME}-${!SERVER_ID_VAR}"
-        STOPPED_LIST=( "${!STOPPED_LIST_VAR}" )
 
         APP_STATE="$(Execute_command "${LOCATION}" \
             "midclt call app.query | jq -r '.[] | select(.name==\"${FULL_APP_NAME}\") | .state'")"
@@ -58,7 +58,7 @@ function Control_app_with_checks() {
             # shellcheck disable=SC2076  # elif below is a deliberate literal-substring match, not regex (APP_NAME may contain regex metacharacters)
             if [[ ! "${APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
                 echo "WARNING: ${FULL_APP_NAME} cannot be started because its state is not 'STOPPED' or 'CRASHED'. It is ${APP_STATE}."
-            elif [[ " ${STOPPED_LIST[*]} " =~ " ${APP_NAME} " ]]; then
+            elif [[ " ${STOPPED_LIST_REF[*]} " =~ " ${APP_NAME} " ]]; then
                 PERFORM_ACTION=1
                 echo -n "Starting ${LOCATION} ${FULL_APP_NAME} again, as it was also active before."
             fi
@@ -78,16 +78,15 @@ function Control_app_with_checks() {
 
         if (( PERFORM_ACTION )); then
             Control_app "${FULL_APP_NAME}" "${ACTION}" "${LOCATION}"
-            [[ "${ACTION}" == "stop" ]] && eval "${LOCATION^^}_STOPPED_LIST+=( \"${APP_NAME}\" )"
+            [[ "${ACTION}" == "stop" ]] && STOPPED_LIST_REF+=( "${APP_NAME}" )
         fi
     done
+    unset -n STOPPED_LIST_REF
 }
 
 function Perform_app_replication() {
     local SOURCE_POOL
     local TARGET_POOL
-
-    local FOUND
 
     local -a SELECTED_APP_JSON_LIST
     local -a APP_JSON_LIST
@@ -118,20 +117,15 @@ function Perform_app_replication() {
         # No --app specified → select all
         SELECTED_APP_JSON_LIST=("${APP_JSON_LIST[@]}")
     else
-        # Filter only requested apps
+        # Filter only requested apps (unknown names already rejected at parse time)
         for APP_NAME in "${APP_LIST[@]}"; do
-            FOUND="false"
             for APP_JSON in "${APP_JSON_LIST[@]}"; do
                 JSON_APP_NAME="$(jq -r '.name' <<< "${APP_JSON}")"
                 if [[ "${JSON_APP_NAME}" == "${APP_NAME}" ]]; then
                     SELECTED_APP_JSON_LIST+=("${APP_JSON}")
-                    FOUND="true"
                     break
                 fi
             done
-            if [[ "${FOUND}" == "false" ]]; then
-                Background_error "ERROR: Requested app '${APP_NAME}' not found in config/apps.json"
-            fi
         done
     fi
 

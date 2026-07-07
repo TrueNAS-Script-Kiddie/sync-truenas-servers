@@ -11,10 +11,24 @@ timestamps) to a pre-change `--test` run. **Capture that baseline log first.**
 
 ## Done (2026-07-07)
 
-The low-risk items — **item 4** and all of **item 7** — are implemented; all
-touched files pass `bash -n`. Still open (larger / needs host verification):
-**item 2** (rollup path trick), **item 3** (app-list validation),
-**item 5** (`eval`→nameref), **item 6** (`midclt -job`, needs a host).
+Items **1, 2, 3, 4, 5** and all of **7** are implemented; all touched files pass
+`bash -n`. Only **item 6** (`midclt -job`) remains open — host-only, optional.
+
+- **Item 2** needed no work: the cryptic `${SCRIPT_DIR/…/…}` substitution was
+  already gone (ROLLUP_CMD now builds an explicit path from the pool that item 1
+  resolves via the direction globals); both item-1 host `--test` runs exercised
+  it (`local` → `backup-pool`, `remote` → `master-pool`).
+- **Item 3** (2026-07-08): `Help` generates the app list from `apps.json`;
+  `Process_command_line_options` rejects unknown `--app` names at parse time
+  (bare `exit 1`, before backgrounding); the redundant not-found branch in
+  `rep_apps.bash`'s filter loop is deleted.
+- **Item 5** (2026-07-08): `Control_app_with_checks` uses a per-iteration
+  `local -n STOPPED_LIST_REF` nameref (with the `unset -n`-first pattern) instead
+  of `${!VAR}`-copy + `eval` append. Verified on `truenas-backup` with a full
+  two-app `--test` run: plex + immich both stopped and restarted on both local
+  and remote (`Starting … again, as it was also active before` ×4), success
+  banner. Also confirmed `--help` renders the generated app list and
+  `--app=nope` is rejected at parse time (item 3).
 
 **Item 1** (direction/pool helper refactor) is done. `Resolve_direction` in
 `common.bash` sets four globals (`SOURCE_LOCATION`/`TARGET_LOCATION`/
@@ -120,7 +134,7 @@ the other `declare`s. Then, module by module:
 - `snap_rollup.bash:15-21`: `EXEC_MODE` becomes
   `EXEC_MODE="${TARGET_LOCATION}_verbose"`.
 
-## 2. Replace the snap_rollup path-substitution trick with an explicit path — [lib/snap_rollup.bash:13](../lib/snap_rollup.bash#L13)
+## 2. Replace the snap_rollup path-substitution trick with an explicit path — ✅ DONE (already resolved; confirmed 2026-07-08) — [lib/snap_rollup.bash:13](../lib/snap_rollup.bash#L13)
 
 `${SCRIPT_DIR/${LOCAL_SOURCE}${REMOTE_SOURCE}/${LOCAL_TARGET}${REMOTE_TARGET}}`
 rewrites e.g. `backup` → `master` *inside the deploy path* to guess where the
@@ -142,7 +156,7 @@ mirror the layout — maximally cryptic and fragile.
 variable, and note that when `TARGET_LOCATION` is `local` the substitution is
 a no-op (source pool ≠ target pool never both appear).
 
-## 3. Validate `--app` at parse time and generate Help's app list — [lib/cli.bash](../lib/cli.bash)
+## 3. Validate `--app` at parse time and generate Help's app list — ✅ DONE (2026-07-08) — [lib/cli.bash](../lib/cli.bash)
 
 - In `Help`, replace the hardcoded `immich`/`plex` lines (35-36) with:
   ```bash
@@ -172,7 +186,7 @@ code that silently returns an empty pool. Reduce to:
 (Return 1, not 0 — combined with plan 01 item 6's call-site guards, an empty
 input now fails loudly instead of propagating an empty pool.)
 
-## 5. `eval` → nameref in `Control_app_with_checks` — [lib/rep_apps.bash:43-45,75](../lib/rep_apps.bash#L43-L45)
+## 5. `eval` → nameref in `Control_app_with_checks` — ✅ DONE (2026-07-08) — [lib/rep_apps.bash:43-45,75](../lib/rep_apps.bash#L43-L45)
 
 Replace the indirect read (`${!STOPPED_LIST_VAR}`) and the `eval` append with
 one nameref per loop iteration:
