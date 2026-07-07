@@ -95,6 +95,7 @@ function Perform_app_replication() {
 
     local -a SELECTED_APP_JSON_LIST
     local -a APP_JSON_LIST
+    local TARGET_APP_STATE
     local APP_NAME
     local JSON_APP_NAME
     local APP_JSON
@@ -167,6 +168,15 @@ function Perform_app_replication() {
             || Background_error "ERROR: '${FULL_SOURCE_PATH}' does not exist. Is the dataset mounted and unlocked?"
         Execute_command "${TARGET_LOCATION}" "test -d \"${FULL_TARGET_PATH#*:}\"" \
             || Background_error "ERROR: '${FULL_TARGET_PATH}' does not exist. Is the dataset mounted and unlocked?"
+
+        # Apps that restore into the running target (Immich DB) can't sync a
+        # stopped target — check before pre-action/stop/rsync, not after.
+        if [[ "$(jq -r '.requires_target_running // false' <<< "${APP_JSON}")" == "true" ]]; then
+            TARGET_APP_STATE="$(Execute_command "${TARGET_LOCATION}" \
+                "midclt call app.query | jq -r '.[] | select(.name==\"${APP_NAME}-${TARGET_SERVER_ID}\") | .state'")"
+            [[ "${TARGET_APP_STATE}" == "RUNNING" ]] \
+                || Background_error "ERROR: ${APP_NAME}-${TARGET_SERVER_ID} must be RUNNING on the target to replicate (its post-action restores into the running app). Current state: ${TARGET_APP_STATE:-not installed}."
+        fi
 
         # # Perform pre-action function from the json (for example: Backup Immich Postgres DB)
         PRE_ACTION="$(jq -r '.pre_action // empty' <<< "${APP_JSON}")"

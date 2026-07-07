@@ -34,9 +34,17 @@ now used throughout the codebase.
 Item 8 (target-VM-running check) is now also done — folded into
 [plan 09](09-stop-running-vms-optarg.md), see below.
 
-## Remaining (deferred — needs dedicated attention + host verification)
+## Done (2026-07-07 — verified on real runs)
 
-### 2. `Restore_immich_DB` wipes the DB before checking the target app is running
+### 2. Target-app-running check for Immich — ✅ DONE
+
+First cut put the guard in `Restore_immich_DB` (the `post_action`), which aborted
+only *after* the rsync had already overwritten the target — a half-done sync.
+Corrected: the precondition is now checked **early** in `Perform_app_replication`
+(before pre-action/stop/rsync), gated by a `requires_target_running` flag in
+`apps.json` (Immich only). A stopped target aborts cleanly and is never started.
+Verified on a real run: `immich-backup` STOPPED aborted right after the header,
+before any backup/rsync.
 
 [lib/immich_db.bash:69-88](../lib/immich_db.bash#L69-L88)
 
@@ -55,7 +63,9 @@ if [[ "$(Execute_command "${TARGET_LOCATION}" "midclt call app.query | jq -r '.[
 fi
 ```
 
-### 5. Impacted-dataset discovery ignores the property VALUE
+### 5. Impacted-dataset discovery ignores the property VALUE — ✅ DONE
+
+Value-filtered `zfs get` in place; verified on a real run (impacted lists unchanged for real datasets) and by a scratch `=false` dataset (old query listed it, new query excluded it).
 
 [lib/rep_filesystems.bash:116-123](../lib/rep_filesystems.bash#L116-L123)
 

@@ -791,11 +791,11 @@ function Perform_vm_replication() {
 
     # === Loop through each source VM ===
     mapfile -t VM_LIST_FROM_SOURCE < <(jq -r '.[].name' <<< "${SOURCE_ALL_VM_JSON}")
+    echo
     for VM in "${VM_LIST_FROM_SOURCE[@]}"; do
         Vm_in_scope "SOURCE" "${VM}" || continue
         PROCESSED_VM_LIST+=("${VM}")
 
-        echo
         echo "### Replicating VM: ${VM} ###"
         echo
 

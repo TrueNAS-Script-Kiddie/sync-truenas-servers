@@ -7,7 +7,6 @@ implement **one numbered item at a time** with exact locations and snippets.
 
 | Plan | What | Risk |
 |---|---|---|
-| [01 items 2, 5](01-bug-fixes.md#remaining-deferred--needs-dedicated-attention--host-verification) | Immich restore guard, dataset-selection query fix — each touches one of the codebase's more sensitive paths (item 8 now done via plan 09) | Medium |
 | [02](02-safety-and-notifications.md) | Failure email, concurrent-run lock, log/dump retention | Low |
 | [03 items 5-6](03-makefile-and-hygiene.md) | Add `.gitattributes`; optional README.md (Makefile deleted, SFTP confirmed as the deploy mechanism) | Low |
 | [04](04-simplifications.md) | Behavior-preserving refactors: direction helper, dead code, `--app` validation at parse time | Medium — do after 01 |
@@ -19,7 +18,7 @@ implement **one numbered item at a time** with exact locations and snippets.
 
 | Plan | What |
 |---|---|
-| [01](01-bug-fixes.md) | 11 of 14 bug fixes — lint-verified, confirmed on `--test` and real runs (2 items above remain open; item 8 done via plan 09) |
+| [01](01-bug-fixes.md) | All 14 bug fixes — lint-verified, confirmed on `--test` and real runs (items 2 & 5 done 2026-07-07; item 8 done via plan 09) |
 | [07](07-shellcheck-findings.md) | Full-codebase shellcheck triage — every finding fixed, disabled with reasoning, or explicitly deferred |
 | [09](09-stop-running-vms-optarg.md) | Opt-in `--stop-running-vms` (stop/restart VMs on both sides; also folds in plan 01 item 8) — implemented and verified on real runs. Key lesson: stops must be **graceful, never forced** (a forced target stop orphans a libvirt domain and breaks the recreate) |
 

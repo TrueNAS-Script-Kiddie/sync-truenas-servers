@@ -178,12 +178,13 @@ function Perform_filesystem_replication() {
     [[ "${TARGET_PARENT_DATASET}" != "/encrypted-ds" ]] || Background_error "ERROR: Failed to resolve target pool for TARGET_PARENT_DATASET."
     [[ "${SOURCE_PARENT_DATASET}" != "/encrypted-ds" ]] || Background_error "ERROR: Failed to resolve source pool for SOURCE_PARENT_DATASET."
 
+    # Filter on the property VALUE, not just presence: a dataset opted out
+    # (autobackup:<scope>=false) is skipped by zfs_autobackup, so skip it here
+    # too. 'zfs get' reports '-' for unset datasets, which awk drops.
     mapfile -t IMPACTED_DATASETS < <(
         Execute_command "$([[ -n "${LOCAL_SOURCE}" ]] && echo local || echo remote)" \
-            "zfs list -H -o name \
-            | xargs zfs get -o name,property all \
-            | grep \" autobackup:${TASK_SCOPE}\" \
-            | awk '{print \$1}' \
+            "zfs get -H -t filesystem,volume -o name,value \"autobackup:${TASK_SCOPE}\" \
+            | awk '\$2==\"true\" {print \$1}' \
             | sed -E 's|.*/encrypted-ds/||'"
     )
 
