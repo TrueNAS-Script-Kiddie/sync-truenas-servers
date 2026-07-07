@@ -42,7 +42,7 @@ function Help() {
     echo -e "plex\t\t\t\t\t\t\t\tLimit the Application Replication subtask to only copy Plex."
     echo
 
-    exit 0
+    exit "${1:-0}"
 }
 
 function Process_command_line_options() {
@@ -138,7 +138,7 @@ function Process_command_line_options() {
         esac
     done
 
-    [[ -z "${TASK}" ]] && Help
+    [[ -z "${TASK}" ]] && Help 1
 
     # When no subtask is specified, then all subtasks are enabled by default
     if [[ -z "${PERFORM_ROLLUP}" && -z "${PERFORM_APP_REP}" && -z "${PERFORM_VM_REP}" && -z "${PERFORM_ZFS_REP_ALL}" && -z "${PERFORM_ZFS_REP_LATEST}" ]]; then

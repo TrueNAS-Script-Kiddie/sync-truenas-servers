@@ -1,11 +1,12 @@
 #!/usr/bin/bash
-# lib/rollup.bash
+# lib/snap_rollup.bash
 # ZFS snapshot rollup orchestration
 
 function Perform_snapshot_rollup() {
     local EXEC_MODE
     local TARGET_POOL
     local TARGET_APP_POOL
+    local ROLLUP_CMD
 
     echo "######################################"
     echo "### Performing ZFS snapshot rollup ###"

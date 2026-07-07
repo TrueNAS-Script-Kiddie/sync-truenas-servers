@@ -84,7 +84,6 @@ function Execute_command() {
 
   else
     Background_error "Incorrect execution mode (${MODE}). Must contain 'local' or 'remote'."
-    return 1
   fi
 
   return "${RETURN_VALUE}"
@@ -94,8 +93,7 @@ function Resolve_pool() {
     local SERVER_TYPE="$1"
     local POOL_TYPE="${2:-normal}"   # "fast" or "normal" (default)
 
-    # If SERVER_TYPE is empty, return empty string silently
-    [[ -z "${SERVER_TYPE}" || "${SERVER_TYPE}" == "fast" ]] && return 0
+    [[ -z "${SERVER_TYPE}" ]] && return 1
 
     case "${SERVER_TYPE}" in
         master)

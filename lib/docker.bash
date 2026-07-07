@@ -39,11 +39,11 @@ function Control_docker_containers() {
     for CONTAINER in "${CONTAINERS[@]}"; do
         CURRENT_STATE=$(Execute_command "${LOCATION}" "docker ps -a --format '{{.Names}} {{.State}}' | awk -v c=\"${CONTAINER}\" '\$1==c {print \$2}'")
         if [[ "${CURRENT_STATE}" != "${DESIRED_STATE}" ]]; then
-        echo "Container ${CONTAINER}: Changing state from ${CURRENT_STATE} to ${DESIRED_STATE}"
-        Execute_command "${LOCATION}" "docker ${ACTION} \"${CONTAINER}\" >/dev/null"
-        Wait_for_docker_state "${LOCATION}" "${CONTAINER}" "${DESIRED_STATE}"
+            echo "Container ${CONTAINER}: Changing state from ${CURRENT_STATE} to ${DESIRED_STATE}"
+            Execute_command "${LOCATION}" "docker ${ACTION} \"${CONTAINER}\" >/dev/null"
+            Wait_for_docker_state "${LOCATION}" "${CONTAINER}" "${DESIRED_STATE}"
         else
-        echo "Container ${CONTAINER}: Is already in ${DESIRED_STATE} state."
+            echo "Container ${CONTAINER}: Is already in ${DESIRED_STATE} state."
         fi
     done
 }

@@ -65,7 +65,6 @@ function Restore_immich_DB() {
         if [[ "${ELAPSED_TIME}" -ge "${MAX_TIMEOUT}" ]]; then
             echo " Timeout. Current state is ${PG_READY_OUTPUT}."
             Background_error "ERROR: Timeout waiting for PostgreSQL in container ${CONTAINER_NAME} to be ready. Current status: ${PG_READY_OUTPUT}."
-            break
         fi
         sleep 5
         done

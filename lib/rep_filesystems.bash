@@ -10,7 +10,7 @@ function Perform_filesystem_replication() {
             echo "###################################################"
             echo "### Performing ZFS Replication of all snapshots ###"
             echo "###################################################"
-            ( IFS=", "; echo "Following filesystems are impacted: ${IMPACTED_DATASETS[*]}" )
+            ( IFS=","; echo "Following filesystems are impacted: ${IMPACTED_DATASETS[*]}" )
             echo
 
         elif [[ "${SCOPE}" == "latest_snapshot_only" ]]; then
@@ -19,14 +19,14 @@ function Perform_filesystem_replication() {
             echo "#########################################################"
             echo "### Performing ZFS Replication of the latest snapshot ###"
             echo "#########################################################"
-            ( IFS=", "; echo "Following filesystems are impacted: ${IMPACTED_DATASETS[*]}" )
+            ( IFS=","; echo "Following filesystems are impacted: ${IMPACTED_DATASETS[*]}" )
             echo
 
         elif [[ "${SCOPE}" == "vm_latest_snapshot_only" ]]; then
             ZFS_AUTOBACKUP_TASK_OPTARGS=" ${TASK_SCOPE} ${TARGET_PARENT_DATASET}"
 
             echo "Performing ZFS Replication of the latest snapshot for the VM '${VM}'${TEST_MODE:+" (Not done because of '--test' usage!)"}"
-            ( IFS=", "; echo "  Following zvols are impacted: ${IMPACTED_DATASETS[*]}" )
+            ( IFS=","; echo "  Following zvols are impacted: ${IMPACTED_DATASETS[*]}" )
             echo
         fi
     }

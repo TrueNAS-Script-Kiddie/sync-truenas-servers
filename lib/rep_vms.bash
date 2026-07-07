@@ -750,10 +750,10 @@ function Perform_vm_replication() {
 
     local SUCCEEDED=0
     local FAILED=0
+    local SKIPPED=0
     local NOTFOUND=0
 
     local SOURCE_VM_JSON_FILE
-    local TARGET_VM_JSON_FILE
     local TRANSFORMED_VM_JSON_FILE
 
     local PROCESSED_VM_LIST=()
@@ -800,7 +800,6 @@ function Perform_vm_replication() {
         echo
 
         SOURCE_VM_JSON_FILE="${VM_TMP_DIR}/json/per_vm/${VM}.truenas-${SOURCE_SERVER_ID}.source.json"
-        TARGET_VM_JSON_FILE="${VM_TMP_DIR}/json/per_vm/${VM}.truenas-${TARGET_SERVER_ID}.target.json"
         TRANSFORMED_VM_JSON_FILE="${VM_TMP_DIR}/json/per_vm/${VM}.truenas-${TARGET_SERVER_ID}.transformed.json"
 
         if [[ ! -f "${SOURCE_VM_JSON_FILE}" ]]; then
@@ -826,7 +825,7 @@ function Perform_vm_replication() {
             if [[ -z "${STOP_RUNNING_VMS}" ]]; then
                 echo "Replication skipped for VM ${VM} (source state='${SOURCE_VM_STATE}'; pass --stop-running-vms to stop it automatically)"
                 echo
-                ((FAILED++))
+                ((SKIPPED++))
                 continue
             fi
             # Register the restore BEFORE stopping, so even a timed-out stop still tries to restart it.
@@ -844,7 +843,7 @@ function Perform_vm_replication() {
                 # (Reachable only when the source was already stopped, so nothing to restore here.)
                 echo "Replication skipped for VM ${VM} (target state='${TARGET_VM_STATE}'; pass --stop-running-vms to stop it automatically)"
                 echo
-                ((FAILED++))
+                ((SKIPPED++))
                 continue
             fi
             TARGET_WAS_RUNNING="true"
@@ -907,6 +906,6 @@ function Perform_vm_replication() {
         done
     fi
 
-    echo "### VM Replication Summary: ${SUCCEEDED} succeeded, ${FAILED} failed, ${NOTFOUND} not found ###"
+    echo "### VM Replication Summary: ${SUCCEEDED} succeeded, ${FAILED} failed, ${SKIPPED} skipped, ${NOTFOUND} not found ###"
     echo
 }

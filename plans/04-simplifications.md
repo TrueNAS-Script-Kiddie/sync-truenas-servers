@@ -9,6 +9,27 @@ Implement items in order; each is independently verifiable with
 `bash -n` + a `--test` run whose log should be diff-identical (modulo
 timestamps) to a pre-change `--test` run. **Capture that baseline log first.**
 
+## Done (2026-07-07)
+
+The low-risk items — **item 4** and all of **item 7** — are implemented; all
+touched files pass `bash -n`. Still open (larger / needs host verification):
+**item 1** (direction/pool helper refactor), **item 2** (rollup path trick),
+**item 3** (app-list validation), **item 5** (`eval`→nameref), **item 6**
+(`midclt -job`, needs a host).
+
+| # | Where | Change |
+|---|---|---|
+| 4 | `common.bash::Resolve_pool` | Dropped the dead `\|\| == "fast"` first-arg branch; empty input now `return 1` instead of silently `return 0` with an empty pool. Proven unreachable in the current program (hostname gate at `bin:34-37` + exhaustive direction `case` make every `$1` non-empty), so behavior is unchanged — kept as future-proofing. |
+| 7 | `snap_rollup.bash:2,13` | Fixed stale `lib/rollup.bash` header comment; declared `ROLLUP_CMD` `local`. |
+| 7 | `docker.bash:41-47` | Indented the `if`/`else` body. |
+| 7 | `cli.bash` | `Help` takes an optional exit code (`exit "${1:-0}"`); missing `--task` now `Help 1` (non-zero) instead of `exit 0`. |
+| 7 | `rep_vms.bash` | Deleted the write-only `TARGET_VM_JSON_FILE` assignment; added a `SKIPPED` counter so source/target-not-stopped skips are no longer miscounted as `FAILED`, and reported it in the summary line. |
+| 7 | `immich_db.bash:68`, `common.bash:87` | Deleted unreachable code after `Background_error`. |
+| 7 | `rep_filesystems.bash:13,22,29` | `IFS=", "` only ever joined on `,` (bash uses IFS's first char); changed to `IFS=","` to match actual output. |
+
+⚠️ Not yet run: the `--test` baseline diff from the verification checklist —
+do that on a TrueNAS host before this ships.
+
 ---
 
 ## 1. Factor the duplicated direction/pool resolution into one helper
@@ -116,7 +137,7 @@ a no-op (source pool ≠ target pool never both appear).
   can keep only the `SELECTED_APP_JSON_LIST+=` matching, without the
   error branch.
 
-## 4. Remove the dead `"fast"` guard in `Resolve_pool` — [lib/common.bash:43](../lib/common.bash#L43)
+## 4. Remove the dead `"fast"` guard in `Resolve_pool` — ✅ DONE (2026-07-07) — [lib/common.bash:43](../lib/common.bash#L43)
 
 No caller passes `"fast"` as the *first* argument (all pass a server id, or
 the `${LOCAL_TARGET}${REMOTE_TARGET}` concatenation which is always
@@ -160,7 +181,7 @@ non-zero on failure, which would delete the whole JOBID/poll machinery.
 format. If output is noisy, keep the poll loop (plan 01 item 3 already fixed
 its real defect). Do not attempt this without host access.
 
-## 7. Small-stuff bucket (all cosmetic, zero behavior change)
+## 7. Small-stuff bucket (all cosmetic, zero behavior change) — ✅ DONE (2026-07-07)
 
 - [lib/snap_rollup.bash:2](../lib/snap_rollup.bash#L2): header comment says
   `lib/rollup.bash` — stale filename.
