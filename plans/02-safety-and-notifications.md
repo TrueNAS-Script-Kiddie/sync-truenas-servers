@@ -67,6 +67,33 @@ fi
 one from another shell: the second must refuse. After the first finishes, a
 new run must start normally.
 
+**Deviation (implemented):** a run can be started from either server, so a
+purely local `flock` doesn't stop two overlapping runs kicked off one on each
+host. A first attempt used a "check, then start" remote probe
+(`flock -n <path> -c 'exit 0'` via SSH) — this turned out to have a real race
+(bounded by the SSH round-trip, not instantaneous: confirmed by starting a
+`--test` run on both hosts at once and having both proceed).
+
+The actual fix makes **truenas-master's own lock file the single cross-host
+arbiter**: a run started on master already holds it via the plain local
+`flock` above. A run started on backup additionally holds that *same* file
+via a backgrounded `ssh ... flock -n <path> -c 'sleep 86400'`, checked after
+a couple seconds with `kill -0` on its PID — if it's still running, the flock
+was acquired and is now held for the run's duration; if it already exited,
+someone else holds it (or master is unreachable) and the run aborts. Both
+sides then contend for one real kernel-level lock on one file, so there's no
+gap between "checked" and "held". The held PID is released via
+`Register_cleanup` (fires on this process's exit either way, not just
+failure) — killing the ssh client hangs up the connection, which drops the
+remote `flock`. A network drop self-heals the same way; the `sleep 86400` cap
+bounds a stale lock even if cleanup never runs.
+
+Gotcha: `LOG_DIR` isn't the same absolute path on both hosts — this project
+deploys under each server's own "fast" pool (`ssdmaster-pool` on master,
+`backup-pool` on backup, per `.vscode/sftp.json`), so the remote lock path is
+built by swapping the pool component via `Resolve_pool`, not by reusing
+`LOG_DIR` as-is.
+
 ## 3. Log retention — [bin/sync_truenas_servers:9](../bin/sync_truenas_servers#L9)
 
 `logs/` currently holds 400+ files and grows forever. After the

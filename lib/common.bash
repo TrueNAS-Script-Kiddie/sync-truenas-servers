@@ -54,6 +54,15 @@ function Kill_tail() {
 function Background_error() {
     echo -e "$1"
     Run_cleanup
+    if [[ -n "${EMAIL_TO}" && -n "${LOG_FILE}" && -f "${LOG_FILE}" ]]; then
+        {
+          echo "Subject: FAILED - Sync from TrueNAS-${LOCAL_SOURCE^}${REMOTE_SOURCE^} to TrueNAS-${LOCAL_TARGET^}${REMOTE_TARGET^} server"
+          echo
+          echo -e "$1"
+          echo
+          cat "${LOG_FILE}"
+        } | sendmail "${EMAIL_TO}"
+    fi
     [[ -z "${TAIL_PID}" ]] && echo "ERROR: Couldn't find tail PID. Are you sure this is properly running in the background?"
     Kill_tail
     exit 1

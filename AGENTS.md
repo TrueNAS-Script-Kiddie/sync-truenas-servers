@@ -49,6 +49,9 @@ bash -n lib/rep_apps.bash
 ./bin/sync_truenas_servers --task=backup_to_master --subtask=vm_replication --vm=VM1 --vm=VM2
 ```
 
+Note: the foreground wrapper always exits 0; success/failure is signaled by
+email and the log, not the exit code. Don't chain `&&` off a run.
+
 Deploy: VS Code SFTP extension, `watcher.autoUpload` on — saves auto-upload to the active profile's host (default `backup`). No manual sync step; never instruct one. Other host = switch profile.
 
 See [lib/cli.bash](lib/cli.bash) (`Help`) for the full option matrix.

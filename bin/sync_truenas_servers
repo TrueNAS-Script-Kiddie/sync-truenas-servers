@@ -22,6 +22,9 @@ fi
 : "${EMAIL_TO:?ERROR: EMAIL_TO must be set in config.local.bash}"
 : "${SSH_CONFIG_FILE:?ERROR: SSH_CONFIG_FILE must be set in config.local.bash}"
 
+# Prune old run logs (retention in days, overridable in config.local.bash)
+find "${LOG_DIR}" -maxdepth 1 -name "${SCRIPT_FILENAME}*.log" -mtime +"${LOG_RETENTION_DAYS:-365}" -delete
+
 # Derive host roles
 declare LOCAL_SERVER_ID="$(hostname -s | sed 's/^truenas-//')"
 if [[ "${LOCAL_SERVER_ID}" == "master" ]]; then
@@ -124,6 +127,19 @@ if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
     # No explicit tail kill here: the 'exit 0' below fires the EXIT trap,
     # which runs Kill_tail (and the cleanup stack, empty on this path).
 else
+    # Deploy path differs by pool per host (.vscode/sftp.json) — swap it for the peer's.
+    declare REMOTE_LOG_DIR="${LOG_DIR/$(Resolve_pool "${LOCAL_SERVER_ID}" fast)/$(Resolve_pool "${REMOTE_SERVER_ID}" fast)}"
+
+    exec 200>"${LOG_DIR}/.sync_truenas_servers.lock"
+    if ! flock -n 200; then
+        echo "ERROR: Another ${SCRIPT_FILENAME} run is already active on this host (lock: ${LOG_DIR}/.sync_truenas_servers.lock)."
+        exit 1
+    fi
+    # Either host can start a run; also check the peer's lock (best-effort — races within the same instant).
+    if ! Execute_command "remote" "flock -n \"${REMOTE_LOG_DIR}/.sync_truenas_servers.lock\" -c 'exit 0'"; then
+        echo "ERROR: A ${SCRIPT_FILENAME} run appears to be active on truenas-${REMOTE_SERVER_ID} (remote lock check failed)."
+        exit 1
+    fi
     echo "Starting ${SCRIPT_FILENAME} in the background (logfile = ${LOG_FILE})."
     nohup "$0" --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"  >>"${LOG_FILE}" 2>&1 & { sleep 1; tail -f "${LOG_FILE}"; }
 fi

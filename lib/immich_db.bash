@@ -34,6 +34,9 @@ function Backup_immich_DB() {
             || Background_error "ERROR: DB backup failed."
         Execute_command "${SOURCE_LOCATION}" "mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\"" \
             || Background_error "ERROR: DB move failed."
+
+        # Prune old dumps on the source; rsync --delete mirrors this to the target.
+        Execute_command "${SOURCE_LOCATION}" "find \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/\" -maxdepth 1 -name '*_immich_backup.dump.sql.gz' -mtime +\"${DUMP_RETENTION_DAYS:-365}\" -delete"
     fi
     echo
     echo "### Making a backup of the Immich Postgres DB has completed successfully ###"
