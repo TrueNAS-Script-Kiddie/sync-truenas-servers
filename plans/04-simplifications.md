@@ -27,8 +27,14 @@ touched files pass `bash -n`. Still open (larger / needs host verification):
 | 7 | `immich_db.bash:68`, `common.bash:87` | Deleted unreachable code after `Background_error`. |
 | 7 | `rep_filesystems.bash:13,22,29` | `IFS=", "` only ever joined on `,` (bash uses IFS's first char); changed to `IFS=","` to match actual output. |
 
-⚠️ Not yet run: the `--test` baseline diff from the verification checklist —
-do that on a TrueNAS host before this ships.
+**Verified on `truenas-backup` (2026-07-07):** full `--test` and full real
+`--task=master_to_backup --stop-running-vms` runs both completed with the
+success banner. Confirmed live: the new `SKIPPED` field prints in the VM
+summary (`2 succeeded, 0 failed, 0 skipped, 0 not found`); the `IFS=","` join
+renders `media-ds` / `backup-desktop-ds,backup-elke-hp-ds,…` as before; all
+three pools (`ssdmaster-pool`/`master-pool`/`backup-pool`) resolve, so the
+`Resolve_pool` `return 1` caused no regression; rollup passed `-t` under
+`--test` and omitted it on the real run.
 
 ---
 

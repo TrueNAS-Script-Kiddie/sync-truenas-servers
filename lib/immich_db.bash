@@ -54,7 +54,10 @@ function Restore_immich_DB() {
 
         echo -n "Waiting for PostgreSQL in container ${CONTAINER_NAME} to be started completely"
         while true; do
-        PG_READY_OUTPUT=$(Execute_command "${TARGET_LOCATION}" "docker exec -i \"${CONTAINER_NAME}\" bash -c 'pg_isready'")
+        # Probe over TCP (--host=localhost), the same channel the restore's psql uses.
+        # A bare pg_isready checks the Unix socket, which the initdb-bootstrap server
+        # (listen_addresses='') answers before the real TCP server is up -> false ready.
+        PG_READY_OUTPUT=$(Execute_command "${TARGET_LOCATION}" "docker exec -i \"${CONTAINER_NAME}\" bash -c 'pg_isready --host=localhost'")
         if [[ "$PG_READY_OUTPUT" == *"accepting connections"* ]]; then
             echo " Start complete."
             break
@@ -92,7 +95,6 @@ function Restore_immich_DB() {
     Control_docker_containers "${TARGET_LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
 
     Wait_for_pg_ready "${CONTAINERS_TO_START[0]}"
-    sleep 2
 
     # Restore Postgres DB from backup
     echo "Restoring of the Immich DB from /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz"

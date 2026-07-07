@@ -1,9 +1,9 @@
 # Plan 08 — Known operational issues (external causes, not code bugs)
 
 Three recurring issues observed in real runs. #1 and #2 are rooted **outside**
-this script's own logic; #3 is a suspected **timing bug in the script's own
-wait logic** (placeholder — awaiting evidence). Documented so they aren't
-mistaken for regressions.
+this script's own logic; #3 was a **timing bug in the script's own wait logic**
+— diagnosed from a real 2026-07-07 failure and **fixed**. Documented so they
+aren't mistaken for regressions.
 
 ---
 
@@ -213,34 +213,59 @@ diagnostics now do automatically without needing anyone watching live.
 
 ---
 
-## 3. Intermittent Immich DB backup/restore failure — PLACEHOLDER (awaiting evidence)
+## 3. Intermittent Immich DB restore failure — DIAGNOSED + FIXED (2026-07-07)
 
-**Symptom (from memory, to confirm):** `Backup_immich_DB` / `Restore_immich_DB`
-occasionally fails — suspected the **restore**, not certain. Looks like
-**timing**: the script treats a DB-container stop or start as complete before
-it actually is.
+**Real occurrence captured (2026-07-07 run, master→backup).** Main log:
+`Wait_for_pg_ready` printed "Start complete", then the restore aborted. The
+restore log (`sync_truenas_servers_DB_Restore.2026-07-07_16-57.log`) is 4 lines:
 
-**Same class as the VM bug ([plan 09](09-stop-running-vms-optarg.md)):** a
-reported state flips to "done" before the underlying service really is.
-`Control_docker_containers` / `Wait_for_docker_state` gate only on the
-`docker ps` container state (`running` / `exited`), which is NOT the same as
-PostgreSQL "accepting connections" (on start) nor "DB fully flushed + files
-released" (on stop).
+```
+psql: error: connection to server at "localhost" (::1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+```
 
-**Concrete suspects to check when it recurs** (`lib/immich_db.bash`):
-- **Backup** (`Backup_immich_DB`): starts the pgvecto container, then runs
-  `pg_dumpall` immediately with **no `Wait_for_pg_ready`** — so `docker running`
-  ≠ pg accepting connections. A real gap, and the easiest fix (add the same
-  wait the restore already has).
-- **Restore** (`Restore_immich_DB`): it *does* `Wait_for_pg_ready` + `sleep 2`
-  before the psql restore, so the start side is more protected. More likely
-  culprits: the container **stop** before the `rm -rf` of pgdata (waits only
-  for `docker exited`, which may not mean the DB fully shut down / released its
-  files → a racy `rm -rf`), or the final `Control_app` stop/start (relies on
-  the midclt job state).
+### Root cause — the probe and the restore used different transports
 
-**Action:** none yet — capture the real failure output next time it occurs,
-then investigate. Likely fix mirrors the VM one: gate on a genuine
-readiness/completion signal (`pg_isready`, file/handle release), not docker's
-reported container state. **Any fix must preserve the container stop/start
-ORDER** (README global guardrail #1) — only *add* waits, never reorder.
+The readiness wait and the restore checked **different channels**, so the wait
+passed while the restore's channel was still down:
+
+- `Wait_for_pg_ready` probed with a bare **`pg_isready`** → the **Unix socket**.
+- The restore pipes into **`psql --host=localhost`** → **TCP** `127.0.0.1/::1:5432`.
+
+`Restore_immich_DB` `rm -rf`s all of pgdata every run, so the freshly-started
+pgvecto container always re-runs **initdb bootstrap**. The postgres image runs
+that bootstrap on a temporary internal server with **`listen_addresses=''`**
+(Unix socket only, TCP deliberately off), then stops it and starts the real
+TCP-listening server. During bootstrap, `pg_isready` on the socket answers
+"accepting connections" while TCP :5432 is still refused → `Wait_for_pg_ready`
+returned early, `sleep 2` wasn't enough, and `psql --host=localhost` hit the
+gap. **Intermittent = race:** usually bootstrap finishes within the probe +
+`sleep 2`; occasionally it doesn't. This revises the earlier guess (stop/rm-rf
+race, or `Control_app`): it *is* the start side, but not a missing wait — the
+wait probed the wrong channel.
+
+### Fix (applied, `lib/immich_db.bash`)
+
+- `Wait_for_pg_ready` now probes **`pg_isready --host=localhost`** — the same TCP
+  channel the restore uses. It stays "not ready" all through initdb bootstrap and
+  only flips once the real TCP server is up, closing the gap by construction.
+- Removed the now-meaningless `sleep 2` (it was papering over the wrong probe).
+- Stop/start **ORDER** unchanged (README global guardrail #1) — only the probe
+  channel changed; no reorder.
+
+### Operational note for the failed run
+
+The 2026-07-07 restore aborted via `Background_error` *before* the final
+`Control_app` stop/start, leaving **immich-backup with a freshly-initialised
+empty pgdata and its writer containers stopped**. Master's data is intact, so
+re-running the immich app_replication (backup → rsync → restore) recovers it.
+
+### Still open (not this bug, but same class — deferred)
+
+`Backup_immich_DB` starts pgvecto then runs `pg_dumpall` with **no**
+`Wait_for_pg_ready`. Lower risk: backup does **not** `rm -rf`/re-initdb (existing
+cluster, no bootstrap phase) and `pg_dumpall` defaults to the **socket**, so
+there's no transport mismatch — but `docker running` still ≠ pg ready. Worth
+adding a socket-side wait defensively; not implicated in this failure.
