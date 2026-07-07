@@ -44,6 +44,7 @@ declare PERFORM_ZFS_REP_ALL
 declare PERFORM_ZFS_REP_LATEST
 declare RUNNING_IN_BACKGROUND
 declare TEST_MODE
+declare STOP_RUNNING_VMS
 declare EXEC_DATE="$(date +%Y-%m-%d)"
 declare LOG_FILE="${LOG_DIR}/${SCRIPT_FILENAME}.$(date +"%Y-%m-%d_%H-%M").log"
 declare DB_RESTORE_LOG="${LOG_DIR}/${SCRIPT_FILENAME}_DB_Restore.$(date +"%Y-%m-%d_%H-%M").log"

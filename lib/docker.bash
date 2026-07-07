@@ -7,7 +7,7 @@ function Wait_for_docker_state() {
     local CONTAINER_NAME="$2"
     local DESIRED_STATE="$3"
     local START_TIME="$(date +%s)"
-    local TIMEOUT=60 # Timeout in seconds
+    local MAX_TIMEOUT=60
     local CURRENT_STATE
     local CURRENT_TIME
     local ELAPSED_TIME
@@ -17,7 +17,7 @@ function Wait_for_docker_state() {
         [[ "$CURRENT_STATE" == "$DESIRED_STATE" ]] && break
         CURRENT_TIME="$(date +%s)"
         ELAPSED_TIME="$((CURRENT_TIME - START_TIME))"
-        [[ "${ELAPSED_TIME}" -ge "${TIMEOUT}" ]] && Background_error "ERROR: Failed to put ${CONTAINER_NAME} in the ${DESIRED_STATE}. Current state: ${CURRENT_STATE}."
+        [[ "${ELAPSED_TIME}" -ge "${MAX_TIMEOUT}" ]] && Background_error "ERROR: Failed to put ${CONTAINER_NAME} in the ${DESIRED_STATE}. Current state: ${CURRENT_STATE}."
         sleep 1
     done
 }

@@ -1,7 +1,9 @@
 # Plan 08 — Known operational issues (external causes, not code bugs)
 
-Two issues observed in real runs, both rooted **outside** this script's own
-logic. Documented so they aren't mistaken for regressions.
+Three recurring issues observed in real runs. #1 and #2 are rooted **outside**
+this script's own logic; #3 is a suspected **timing bug in the script's own
+wait logic** (placeholder — awaiting evidence). Documented so they aren't
+mistaken for regressions.
 
 ---
 
@@ -208,3 +210,37 @@ diagnostics now do automatically without needing anyone watching live.
    target-share-disable feature (design above).
 5. **Exit-code-aware partial-failure handling** (design above) — lower
    priority since it limits impact rather than addressing the cause.
+
+---
+
+## 3. Intermittent Immich DB backup/restore failure — PLACEHOLDER (awaiting evidence)
+
+**Symptom (from memory, to confirm):** `Backup_immich_DB` / `Restore_immich_DB`
+occasionally fails — suspected the **restore**, not certain. Looks like
+**timing**: the script treats a DB-container stop or start as complete before
+it actually is.
+
+**Same class as the VM bug ([plan 09](09-stop-running-vms-optarg.md)):** a
+reported state flips to "done" before the underlying service really is.
+`Control_docker_containers` / `Wait_for_docker_state` gate only on the
+`docker ps` container state (`running` / `exited`), which is NOT the same as
+PostgreSQL "accepting connections" (on start) nor "DB fully flushed + files
+released" (on stop).
+
+**Concrete suspects to check when it recurs** (`lib/immich_db.bash`):
+- **Backup** (`Backup_immich_DB`): starts the pgvecto container, then runs
+  `pg_dumpall` immediately with **no `Wait_for_pg_ready`** — so `docker running`
+  ≠ pg accepting connections. A real gap, and the easiest fix (add the same
+  wait the restore already has).
+- **Restore** (`Restore_immich_DB`): it *does* `Wait_for_pg_ready` + `sleep 2`
+  before the psql restore, so the start side is more protected. More likely
+  culprits: the container **stop** before the `rm -rf` of pgdata (waits only
+  for `docker exited`, which may not mean the DB fully shut down / released its
+  files → a racy `rm -rf`), or the final `Control_app` stop/start (relies on
+  the midclt job state).
+
+**Action:** none yet — capture the real failure output next time it occurs,
+then investigate. Likely fix mirrors the VM one: gate on a genuine
+readiness/completion signal (`pg_isready`, file/handle release), not docker's
+reported container state. **Any fix must preserve the container stop/start
+ORDER** (README global guardrail #1) — only *add* waits, never reorder.

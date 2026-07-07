@@ -31,6 +31,9 @@ now used throughout the codebase.
 
 ---
 
+Item 8 (target-VM-running check) is now also done — folded into
+[plan 09](09-stop-running-vms-optarg.md), see below.
+
 ## Remaining (deferred — needs dedicated attention + host verification)
 
 ### 2. `Restore_immich_DB` wipes the DB before checking the target app is running
@@ -78,29 +81,16 @@ Verify in a `--test` run that the impacted-dataset list is unchanged for
 today's actual (all-`true`-or-unset) datasets, and that `-`/`false` datasets
 are now correctly excluded.
 
-### 8. Target VM state never checked before `vm.delete`
-
-[lib/rep_vms.bash:736](../lib/rep_vms.bash#L736)
+### 8. Target VM state never checked before `vm.delete` — ✅ DONE via plan 09
 
 The source VM must be STOPPED, but in this dual-active topology the same VM
 may legitimately be **RUNNING on the target** — `Delete_vm_on_destination`
-then fails mid-run and aborts everything.
-
-**Fix:** right after the source `Vm_is_stopped` check in
-`Perform_vm_replication`, add a target-side check (only applies if the VM
-exists on the target):
-
-```bash
-local TARGET_STATE
-TARGET_STATE="$(jq -r --arg VM "${VM}" '.[] | select(.name == $VM) | .status.state' <<< "${TARGET_ALL_VM_JSON}")"
-if [[ -n "${TARGET_STATE}" && "${TARGET_STATE}" != "STOPPED" ]]; then
-    echo "Replication skipped for VM ${VM} (state on target='${TARGET_STATE}')"
-    ((FAILED++))
-    continue
-fi
-```
-
-Host-verify a case where the target VM is legitimately running.
+used to fail mid-run and abort everything. **Folded into
+[plan 09](09-stop-running-vms-optarg.md)** (2026-07-04), which added the
+target-side state check in the same place it added the source-side one: a
+running target is skipped by default, or (with `--stop-running-vms`) stopped
+before delete and handled per that plan. Still pending the same host
+verification plan 09 lists.
 
 ---
 

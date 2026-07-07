@@ -38,21 +38,96 @@ function Vm_in_scope() {
     fi
 }
 
-# Validate that a VM is STOPPED
-function Vm_is_stopped() {
-    local SOURCE_OR_TARGET="$1"
-    local VM="$2"
+# Stop or start a VM by id, waiting until the operation is FULLY complete.
+#
+# GRACEFUL stops only, never forced — load-bearing. A forced poweroff flips .status.state
+# to STOPPED while libvirt is still tearing the domain down, which (a) would snapshot the
+# source zvol before its guest cleanly shut down, and (b) leaves an orphan libvirt domain
+# that vm.delete won't undefine, breaking the recreate on a UUID collision (see plan 09).
+# Graceful settles fully: .state reaches STOPPED only once the domain is SHUTOFF.
+#
+# vm.stop is a JOB → wait for it to reach SUCCESS (core.get_jobs), not just for .state,
+# then confirm STOPPED (a graceful job can 'succeed' while a still-booting/unresponsive
+# guest ignored ACPI — clear abort then). vm.start is synchronous → just poll the state.
+# 180s timeout → Background_error. Skipped under --test.
+function Control_vm() {
+    local VM_NAME="$1"
+    local VM_ID="$2"
+    local ACTION="$3"          # stop or start
+    local LOCATION="$4"        # local or remote (of the host owning the VM)
+    local SERVER_ID="$5"       # for log messages only
 
-    local JSON_VAR="${SOURCE_OR_TARGET^^}_ALL_VM_JSON"
-    local JSON="${!JSON_VAR}"
+    local DESIRED_STATE
+    local ACTION_LABEL
+    local JOBID
+    local JOB_STATE
+    local CURRENT_STATE
+    local TIMEOUT_COUNTER=0
+    local MAX_TIMEOUT=180
 
-    local STATE
-    STATE="$(jq -r --arg VM "${VM}" '.[] | select(.name == $VM) | .status.state' <<< "${JSON}")"
+    # Abort, first closing the in-progress "...dots" line so the error starts on its own line.
+    l_Abort() { echo; Background_error "$1"; }
 
-    if [[ "${STATE}" != "STOPPED" ]]; then
-        echo "Replication skipped for VM ${VM} (state='${STATE}')"
-        return 1
+    case "${ACTION}" in
+        stop)  DESIRED_STATE="STOPPED"; ACTION_LABEL="Stopping" ;;
+        start) DESIRED_STATE="RUNNING"; ACTION_LABEL="Starting" ;;
+        *)     Background_error "ERROR: Invalid VM action '${ACTION}' (expected 'stop' or 'start')." ;;
+    esac
+
+    echo -n "${ACTION_LABEL} VM '${VM_NAME}' (id ${VM_ID}) on truenas-${SERVER_ID}${TEST_MODE:+" (Not done because of '--test' usage!)"}"
+    [[ -n "${TEST_MODE}" ]] && { echo; echo; return 0; }
+
+    if [[ "${ACTION}" == "stop" ]]; then
+        # Wait for the stop JOB itself to finish (not just .state) — libvirt settled before vm.delete.
+        JOBID="$(Execute_command "${LOCATION}" "midclt call vm.stop ${VM_ID}")"
+        [[ -n "${JOBID}" ]] || l_Abort "ERROR: vm.stop for VM '${VM_NAME}' (id ${VM_ID}) on truenas-${SERVER_ID} returned no job id."
+        while true; do
+            JOB_STATE="$(Execute_command "${LOCATION}" "midclt call core.get_jobs \"[[\\\"id\\\",\\\"=\\\",${JOBID}]]\" | jq -r '.[0].state'")"
+            [[ "${JOB_STATE}" == "SUCCESS" ]] && break
+            [[ "${JOB_STATE}" =~ ^(FAILED|ABORTED|ERROR)$ ]] \
+                && l_Abort "ERROR: vm.stop for VM '${VM_NAME}' (id ${VM_ID}) on truenas-${SERVER_ID} ended in state ${JOB_STATE}."
+            ((TIMEOUT_COUNTER++))
+            [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] \
+                && l_Abort "ERROR: VM '${VM_NAME}' (id ${VM_ID}) on truenas-${SERVER_ID} did not shut down within ${MAX_TIMEOUT}s (job state: ${JOB_STATE}). The guest is likely still booting or is not responding to a graceful (ACPI) shutdown — let it finish booting and retry, or stop it manually."
+            echo -n "."
+            sleep 1
+        done
+        # A graceful stop job can succeed without the guest actually powering off; make sure.
+        CURRENT_STATE="$(Execute_command "${LOCATION}" "midclt call vm.query \"[[\\\"id\\\",\\\"=\\\",${VM_ID}]]\" | jq -r '.[0].status.state'")"
+        [[ "${CURRENT_STATE}" == "STOPPED" ]] \
+            || l_Abort "ERROR: VM '${VM_NAME}' (id ${VM_ID}) on truenas-${SERVER_ID} did not power off — state is still ${CURRENT_STATE} after the graceful shutdown. The guest ignored the ACPI shutdown (likely still booting or unresponsive) — let it finish booting and retry, or stop it manually."
+    else
+        # vm.start is synchronous; poll the state until the guest is actually running.
+        Execute_command "${LOCATION}" "midclt call vm.start ${VM_ID} >/dev/null 2>&1" \
+            || l_Abort "ERROR: Failed to start VM '${VM_NAME}' (id ${VM_ID}) on truenas-${SERVER_ID}."
+        while true; do
+            CURRENT_STATE="$(Execute_command "${LOCATION}" "midclt call vm.query \"[[\\\"id\\\",\\\"=\\\",${VM_ID}]]\" | jq -r '.[0].status.state'")"
+            [[ "${CURRENT_STATE}" == "RUNNING" ]] && break
+            ((TIMEOUT_COUNTER++))
+            [[ "${TIMEOUT_COUNTER}" -gt "${MAX_TIMEOUT}" ]] \
+                && l_Abort "ERROR: VM '${VM_NAME}' (id ${VM_ID}) on truenas-${SERVER_ID} did not reach RUNNING within ${MAX_TIMEOUT}s (current state: ${CURRENT_STATE})."
+            echo -n "."
+            sleep 1
+        done
     fi
+    echo " ${DESIRED_STATE}."
+    echo
+}
+
+# Warn that a running target VM was disturbed by an aborted run. Registered on the cleanup
+# stack when --stop-running-vms stops a running target, unregistered on a clean finish; on
+# abort it fires so the operator knows the target is NOT in its pre-run state. We don't
+# auto-start it — it was mid destroy/rebuild.
+function Warn_target_vm_state() {
+    local VM="$1"
+    local SERVER_ID="$2"
+
+    echo
+    echo "  !!! WARNING: VM '${VM}' was RUNNING on truenas-${SERVER_ID} before this run."
+    echo "  !!! The run stopped it to rebuild the target copy, then aborted before finishing."
+    echo "  !!! Its state now differs from before the run — check it and start it manually"
+    echo "  !!! on truenas-${SERVER_ID} if needed."
+    echo
 }
 
 ####################################
@@ -685,6 +760,9 @@ function Perform_vm_replication() {
     local VM_LIST_FROM_SOURCE
     local VM
 
+    local SOURCE_VM_ID SOURCE_VM_STATE TARGET_VM_ID TARGET_VM_STATE
+    local SOURCE_STOPPED_BY_US TARGET_WAS_RUNNING
+
     echo "#################################"
     echo "### Performing VM Replication ###"
     echo "#################################"
@@ -727,19 +805,63 @@ function Perform_vm_replication() {
 
         if [[ ! -f "${SOURCE_VM_JSON_FILE}" ]]; then
             echo "Missing per‑VM JSON: ${SOURCE_VM_JSON_FILE}"
+            echo
             ((FAILED++))
             continue
         fi
 
-        # a. Validate state
-        if ! Vm_is_stopped "SOURCE" "${VM}"; then
-            ((FAILED++))
-            continue
+        # a. Determine source/target power state (and ids, for optional stop/start).
+        SOURCE_STOPPED_BY_US="false"
+        TARGET_WAS_RUNNING="false"
+        SOURCE_VM_ID="$(jq -r --arg VM "${VM}" '.[] | select(.name==$VM) | .id' <<< "${SOURCE_ALL_VM_JSON}")"
+        SOURCE_VM_STATE="$(jq -r --arg VM "${VM}" '.[] | select(.name==$VM) | .status.state' <<< "${SOURCE_ALL_VM_JSON}")"
+        TARGET_VM_ID="$(jq -r --arg VM "${VM}" '.[] | select(.name==$VM) | .id' <<< "${TARGET_ALL_VM_JSON}")"
+        TARGET_VM_STATE="$(jq -r --arg VM "${VM}" '.[] | select(.name==$VM) | .status.state' <<< "${TARGET_ALL_VM_JSON}")"
+
+        # The source must be STOPPED to snapshot it cleanly. If running:
+        #   --stop-running-vms -> stop now, restart at the end / on abort (source is only read,
+        #                         so restoring its running state is always safe)
+        #   otherwise          -> skip this VM (default behaviour)
+        if [[ "${SOURCE_VM_STATE}" != "STOPPED" ]]; then
+            if [[ -z "${STOP_RUNNING_VMS}" ]]; then
+                echo "Replication skipped for VM ${VM} (source state='${SOURCE_VM_STATE}'; pass --stop-running-vms to stop it automatically)"
+                echo
+                ((FAILED++))
+                continue
+            fi
+            # Register the restore BEFORE stopping, so even a timed-out stop still tries to restart it.
+            # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
+            Register_cleanup 'Control_vm "${VM}" "${SOURCE_VM_ID}" start "${SOURCE_LOCATION}" "${SOURCE_SERVER_ID}"'
+            Control_vm "${VM}" "${SOURCE_VM_ID}" stop "${SOURCE_LOCATION}" "${SOURCE_SERVER_ID}"
+            SOURCE_STOPPED_BY_US="true"
+        fi
+
+        # The target may legitimately be RUNNING (dual-active); it must be STOPPED before
+        # Delete_vm_on_destination. Same opt-in policy as the source, but its old instance is
+        # deliberately destroyed/rebuilt, so on abort we only WARN (below) — never auto-start.
+        if [[ -n "${TARGET_VM_STATE}" && "${TARGET_VM_STATE}" != "STOPPED" ]]; then
+            if [[ -z "${STOP_RUNNING_VMS}" ]]; then
+                # (Reachable only when the source was already stopped, so nothing to restore here.)
+                echo "Replication skipped for VM ${VM} (target state='${TARGET_VM_STATE}'; pass --stop-running-vms to stop it automatically)"
+                echo
+                ((FAILED++))
+                continue
+            fi
+            TARGET_WAS_RUNNING="true"
         fi
 
         Transform_vm_definition "${SOURCE_SERVER_ID}" "${TARGET_SERVER_ID}"
         Cleanup_vm_disk_tags "${SOURCE_LOCATION}"
         Tag_vm_disks "${SOURCE_LOCATION}" "${VM}"
+
+        # Stop the running target just before deleting it (minimal stopped window). Register
+        # the warn-on-abort HERE, not at detection, so an abort earlier (target untouched)
+        # doesn't warn misleadingly. (Control_vm stops gracefully — see its header for why.)
+        if [[ "${TARGET_WAS_RUNNING}" == "true" ]]; then
+            # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
+            Register_cleanup 'Warn_target_vm_state "${VM}" "${TARGET_SERVER_ID}"'
+            Control_vm "${VM}" "${TARGET_VM_ID}" stop "${TARGET_LOCATION}" "${TARGET_SERVER_ID}"
+        fi
         Delete_vm_on_destination "${TARGET_LOCATION}" "${VM}"
         Audit_and_cleanup_vm_storage "${TARGET_LOCATION}" "${VM}"
         Rsync_vm_file_disks "${SOURCE_LOCATION}" "${VM}"
@@ -747,9 +869,30 @@ function Perform_vm_replication() {
         Cleanup_vm_disk_tags "${SOURCE_LOCATION}"
 
         if Verify_and_recreate_vm "${TARGET_LOCATION}" "${VM}"; then
+            # The rebuilt target is created STOPPED; start it only if the previous target
+            # instance was running when we began. Re-query for its new id first.
+            if [[ "${TARGET_WAS_RUNNING}" == "true" ]]; then
+                TARGET_VM_ID="$(jq -r --arg VM "${VM}" '.[] | select(.name==$VM) | .id' <<< "$(Execute_command "${TARGET_LOCATION}" "midclt call vm.query")")"
+                Control_vm "${VM}" "${TARGET_VM_ID}" start "${TARGET_LOCATION}" "${TARGET_SERVER_ID}"
+                Unregister_cleanup   # target restored -> drop the warn-on-abort
+            fi
             ((SUCCEEDED++))
         else
             ((FAILED++))
+            # Graceful per-VM failure (no script abort): the target is left rebuilt-but-stopped.
+            # Clear the warn-on-abort and note the left-stopped state plainly instead.
+            if [[ "${TARGET_WAS_RUNNING}" == "true" ]]; then
+                Unregister_cleanup
+                echo "NOTE: VM '${VM}' was running on truenas-${TARGET_SERVER_ID} before this run, but its target rebuild did not complete; it is left stopped."
+            fi
+            echo
+        fi
+
+        # Restore the source we stopped for this VM (clean path). On a script abort the
+        # cleanup stack handles this instead.
+        if [[ "${SOURCE_STOPPED_BY_US}" == "true" ]]; then
+            Control_vm "${VM}" "${SOURCE_VM_ID}" start "${SOURCE_LOCATION}" "${SOURCE_SERVER_ID}"
+            Unregister_cleanup
         fi
     done
 

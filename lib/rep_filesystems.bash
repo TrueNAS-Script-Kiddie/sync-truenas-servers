@@ -44,11 +44,15 @@ function Perform_filesystem_replication() {
 
         echo
         echo "  --- Diagnostics: truenas-${SERVER_ID} ---"
-        for DS in "${DATASETS[@]}"; do
-            echo
-            echo "    fuser -vm /mnt/${PARENT_DATASET}/${DS}:"
-            Execute_command "${LOCATION_MODE}" "fuser -vm '/mnt/${PARENT_DATASET}/${DS}' 2>&1" | column -t | sed 's/^/      /'
-        done
+        # fuser needs a filesystem mountpoint; skip it for the VM scope (zvols are block
+        # devices under /dev/zvol, not /mnt). smbstatus below is host-wide, so it always runs.
+        if [[ "${SCOPE}" != "vm_latest_snapshot_only" ]]; then
+            for DS in "${DATASETS[@]}"; do
+                echo
+                echo "    fuser -vm /mnt/${PARENT_DATASET}/${DS}:"
+                Execute_command "${LOCATION_MODE}" "fuser -vm '/mnt/${PARENT_DATASET}/${DS}' 2>&1" | column -t | sed 's/^/      /'
+            done
+        fi
         echo
         echo "    smbstatus -L (locked files):"
         Execute_command "${LOCATION_MODE}" "smbstatus -L 2>&1" | sed 's/^/      /'

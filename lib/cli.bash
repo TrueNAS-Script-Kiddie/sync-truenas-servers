@@ -6,7 +6,7 @@ function Help() {
     echo "Help for ${SCRIPT_FILENAME}"
     echo
     echo -e "${SCRIPT_FILENAME} [-h] [--help]\t\t\t\tDisplays this help message."
-    echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>] [--vm=<name>*]"
+    echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>] [--vm=<name>*] [--stop-running-vms]"
     echo -e "\t\t\t\t\t\t\t\tPerforms the requested replication."
     echo
     echo -e "--test"
@@ -15,6 +15,12 @@ function Help() {
     echo -e "--vm=<name>"
     echo -e "\tThis option limits VM replication to specific VMs."
     echo -e "\tRepeat this option for each VM: e.g. --vm=VM1 --vm=VM2"
+    echo
+    echo -e "--stop-running-vms"
+    echo -e "\tStop a VM that is running (on the source and/or the target) before"
+    echo -e "\treplicating it, and start it again afterwards if this run stopped it."
+    echo -e "\tWithout this option, a running VM is skipped. Only valid with the"
+    echo -e "\tvm_replication subtask."
     echo
     echo "Allowed tasks:"
     echo -e "master_to_backup\t\t\t\t\t\tPerform a sync from the TrueNAS-Master server to the TrueNAS-Backup server (= backup)."
@@ -110,6 +116,10 @@ function Process_command_line_options() {
             # shellcheck disable=SC2076  # deliberate literal-substring match, not regex
             [[ ! " ${VM_LIST[*]} " =~ " ${OPTION#--vm=} " ]] && VM_LIST+=( "${OPTION#--vm=}" )
             ;;
+        --stop-running-vms)
+            # shellcheck disable=SC2034  # consumed in lib/rep_vms.bash
+            STOP_RUNNING_VMS="true"
+            ;;
         --running_in_background)
             # shellcheck disable=SC2034  # consumed by bin/sync_truenas_servers
             RUNNING_IN_BACKGROUND="true"
@@ -148,6 +158,12 @@ function Process_command_line_options() {
     # --app is only allowed if $PERFORM_APP_REP=true
     if [[ "${#APP_LIST[@]}" -gt 0 && -z "${PERFORM_APP_REP}" ]]; then
         echo "ERROR: --app can only be used when the app_replication subtask is enabled."
+        exit 1
+    fi
+
+    # --stop-running-vms is only allowed if $PERFORM_VM_REP=true
+    if [[ -n "${STOP_RUNNING_VMS}" && -z "${PERFORM_VM_REP}" ]]; then
+        echo "ERROR: --stop-running-vms can only be used when the vm_replication subtask is enabled."
         exit 1
     fi
     

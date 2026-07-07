@@ -44,7 +44,7 @@ function Restore_immich_DB() {
     function Wait_for_pg_ready() {
         local CONTAINER_NAME="$1"
         local START_TIME="$(date +%s)"
-        local TIMEOUT=60 # Timeout in seconds
+        local MAX_TIMEOUT=60
         local PG_READY_OUTPUT
         local CURRENT_TIME
         local ELAPSED_TIME
@@ -59,7 +59,7 @@ function Restore_immich_DB() {
         echo -n "."
         CURRENT_TIME="$(date +%s)"
         ELAPSED_TIME="$((CURRENT_TIME - START_TIME))"
-        if [[ "${ELAPSED_TIME}" -ge "${TIMEOUT}" ]]; then
+        if [[ "${ELAPSED_TIME}" -ge "${MAX_TIMEOUT}" ]]; then
             echo " Timeout. Current state is ${PG_READY_OUTPUT}."
             Background_error "ERROR: Timeout waiting for PostgreSQL in container ${CONTAINER_NAME} to be ready. Current status: ${PG_READY_OUTPUT}."
             break
