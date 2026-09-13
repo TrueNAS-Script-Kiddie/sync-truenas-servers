@@ -33,7 +33,7 @@ New-host deploy: SFTP doesn't set the exec bit on new files — `chmod +x bin/sy
   - [docker.bash](lib/docker.bash) — `Control_docker_containers`, `Wait_for_docker_state`.
   - [immich_db.bash](lib/immich_db.bash) — `Backup_immich_DB` / `Restore_immich_DB` wired as `pre_action` / `post_action` in `apps.json`.
 - [config/](config/) — `apps.json` (app replication spec), `vm_device_mappings.json` (per-dtype path/NIC/display rewrites master↔backup), `app_config_mappings.json` (app-config rewrites master↔backup; spec in `app_divergences.md`), `config.local.bash` (untracked, provides `EMAIL_TO` + `SSH_CONFIG_FILE`), `config.example.bash` (template).
-  - `SSH_CONFIG_FILE` must point at `/mnt/<master|backup>-pool/homedir-ds/home/root/.ssh/config` — root's *second* home, deliberately on an unencrypted dataset because the appliance won't let root's real homedir be repointed. That key is what the two hosts authenticate to each other with, so `homedir-ds` is not leftover clutter even though the scripts that once lived in its `bin/` have moved to `app-ds`.
+  - `SSH_CONFIG_FILE` must point at `/mnt/<master|backup>-pool/homedir-ds/home/root/.ssh/config` — root's *second* home — `/root` sits in the appliance's boot environment and is replaced by an update, so persistent files live on a data pool instead; unencrypted on purpose, so it is reachable after a reboot before anything is unlocked. That key is what the two hosts authenticate to each other with, so `homedir-ds` is not leftover clutter even though the scripts that once lived in its `bin/` have moved to `app-ds`.
 - `logs/`, `tmp/` — runtime only (gitignored).
 
 ## Essential commands

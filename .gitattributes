@@ -1,0 +1,4 @@
+* text=auto
+*.bash text eol=lf
+*.json text eol=lf
+bin/sync_truenas_servers text eol=lf
