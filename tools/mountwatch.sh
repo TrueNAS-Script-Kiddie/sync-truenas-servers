@@ -16,14 +16,15 @@
 # mounted=no with ns>0, and freeing=nonzero during a receive, are the two states
 # that put zfs recv on EBUSY while fuser and smbstatus show nothing at all.
 #
-# Usage (target host, as root):
-#   setsid bash tools/mountwatch.sh >> /path/to/mountwatch.log 2>&1 < /dev/null &
+# Usage (target host, as root, from the deployed copy so the log lands beside it):
+#   cd /mnt/<pool>/encrypted-ds/app-ds/sync_truenas_servers/tools
+#   setsid bash mountwatch.sh >> mountwatch.log 2>&1 < /dev/null &
 #   disown
 #
 # setsid detaches it from the terminal: a plain 'nohup ... &' under sudo gets
-# killed by sudo's process monitor. Keep the log off /tmp -- that is tmpfs and
-# noexec on TrueNAS, so the log dies on reboot and a script there will not run.
-# /mnt/<pool>-pool/homedir-ds/home/root/ is the persistent, unencrypted choice.
+# killed by sudo's process monitor. Do not put the script or its log on /tmp --
+# that is tmpfs and noexec on TrueNAS, so the log dies on reboot and the script
+# will not run from there at all.
 
 DS_ROOT="${DS_ROOT:-backup-pool/encrypted-ds}"
 POOL="${POOL:-${DS_ROOT%%/*}}"
