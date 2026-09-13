@@ -1,8 +1,15 @@
 # Plan 09 — `--stop-running-vms` (stop/restart VMs around replication)
 
-**Status: implemented and verified (2026-07-07).** Both source-side and
-target-side paths confirmed on real runs. Also folds in plan 01 item 8
-(target-VM-running check). Lint-clean (`bash -n`, `shellcheck -x`).
+**Status: `--stop-running-vms` itself implemented and verified (2026-07-07).**
+Both source-side and target-side paths confirmed on real runs. Also folds in
+plan 01 item 8 (target-VM-running check). Lint-clean (`bash -n`,
+`shellcheck -x`).
+
+**⚠️ Open bug (found 2026-08-23): the target-side delete→recreate step can
+still fail on a UUID collision, even with a fully graceful stop.** See
+"Known open bug" below — the "no orphan" claim in this plan only holds for
+the forced-poweroff case it was written to fix; a second, still-unfixed
+mechanism produces the same symptom.
 
 ## What it does
 
@@ -99,13 +106,66 @@ first ~minute after starting a VM.
    sequence with the `(Not done because of '--test' usage!)` markers and no
    real power change.
 
-## Appendix — recovering from a pre-fix orphan (should no longer occur)
+## Known open bug — UUID collision on delete→recreate (unresolved)
 
-If an old forced-stop-era orphan is ever encountered (`vm.create` fails with
-`domain '<id>_<name>' is already defined`): force-delete the ERROR-state VM
-(GUI Force Delete, or `midclt call vm.delete <id> '{"force": true}'` — leave
-"Delete Virtual Machine Data" / `zvols` OFF so the replicated disk is kept),
-then undefine the leftover domain:
+Confirmed 2026-08-23 on real runs, **with fully graceful stops** (job waited
+for `SUCCESS`, `.state` confirmed `STOPPED` — the exact discipline this plan
+requires). The target-side rebuild still intermittently fails with:
+
+```
+operation failed: domain '<old-id>_<name>' is already defined with uuid <uuid>
+```
+
+**Root cause: `Transform_vm_definition` copies the source VM's `uuid` field
+into the destination definition verbatim, and it is never regenerated.**
+Confirmed by inspecting the per-VM JSON: FedoraF's transformed JSON always
+carries `uuid: bb499b25-2296-418e-a71c-12bd0759ae96` — the master VM's own
+libvirt UUID — on every single replication run, no matter how many times the
+destination copy is deleted and rebuilt. Because that UUID never changes,
+`vm.create`'s `defineXML` call always asks libvirt to register a domain
+under the *exact same UUID as the previous destination attempt*. If the
+prior `vm.delete`'s libvirt-undefine hasn't fully completed by the time the
+following `vm.create` runs — a race, since `vm.delete` returning success
+does not guarantee the underlying libvirt domain is synchronously
+undefined — the new `defineXML` collides with the not-yet-cleared old
+domain, which is still holding that UUID.
+
+This is a genuine, reproducible middleware/timing race, not caused by a
+logged-in session, a manually-created VM, or anything external — the
+colliding UUID is provably always the source VM's own fixed UUID, which
+only this script's transform step ever copies over. It hit two independent
+VMs (FedoraBC, FedoraF) on 2026-08-23, on different runs, each time with
+that VM's own fixed source UUID in the error — never a random/foreign one.
+FedoraBC's delete→recreate has since succeeded cleanly on other runs the
+same day, confirming this is a race (sometimes won, sometimes lost), not a
+deterministic failure — so it will keep recurring under
+`--stop-running-vms` until fixed.
+
+**Not yet fixed.** Two candidate fixes, not yet implemented:
+1. Stop copying `.uuid` into the destination definition (strip it in
+   `Transform_vm_definition`, same way `.id`/`.status`/`.devices` are
+   already stripped) — let TrueNAS/libvirt generate a fresh UUID for the
+   destination domain, decoupling it entirely from whatever the previous
+   destination attempt's (possibly-still-lingering) domain object holds.
+2. After `Delete_vm_on_destination`, actively poll (`virsh list --all` or
+   `vm.query`) until the domain is confirmed gone before proceeding to
+   `Create_vm_on_destination`, instead of trusting `vm.delete`'s return
+   value alone.
+Fix 1 is probably sufficient on its own and removes the dependency on
+`vm.delete` timing entirely; fix 2 closes the race directly if UUIDs must
+stay matched for some undocumented reason. Until one lands, treat this as a
+recurring failure mode of `--stop-running-vms`, not a one-off — see the
+appendix below for manual recovery.
+
+## Appendix — recovering from an orphan domain (recurring, see bug above)
+
+When `vm.create` fails with `domain '<id>_<name>' is already defined`:
+force-delete the ERROR-state VM (GUI Force Delete, or
+`midclt call vm.delete <id> '{"force": true}'` — leave "Delete Virtual
+Machine Data" / `zvols` OFF so the replicated disk is kept), then undefine
+the leftover domain:
 `virsh -c 'qemu+unix:///system?socket=/run/truenas_libvirt/libvirt-sock' undefine <id>_<name>`.
 The TrueNAS libvirt socket is non-standard (the default `libvirtd.socket` is
-masked); that URI is how `virsh` connects.
+masked); that URI is how `virsh` connects. Then re-run VM replication for
+that VM — the next attempt has a good chance of winning the race, but is
+not guaranteed to (see bug above).
