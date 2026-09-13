@@ -37,8 +37,10 @@ lines isn't mistaken for something today's fixes broke.
 
 ## 2. Intermittent "dataset is busy" ZFS receive failures — UNRESOLVED
 
-**Symptom:** `zfs_autobackup` occasionally fails partway through the
-`latest_snapshot_only` filesystem-replication scope:
+**Symptom:** `zfs_autobackup` occasionally fails partway through a
+filesystem-replication scope. Most often `latest_snapshot_only` on the large
+`backup-*-ds` datasets, but not exclusively — a 2026-09-13 run failed on
+`media-ds` in the `all_snapshots` scope:
 
 ```
 ! [Target] STDERR > cannot receive incremental stream: dataset is busy
@@ -49,7 +51,7 @@ lines isn't mistaken for something today's fixes broke.
 ERROR: ZFS Replication failed
 ```
 
-A related, separate symptom seen the same day: a subsequent run reported a
+A related, separate symptom seen alongside it: a subsequent run reported a
 stale resume token (`cannot resume send: ... no longer exists` / `Aborting
 resume, we dont want that snapshot anymore`). Confirmed by reading
 `ZfsAutobackup.py` directly (`_plan_sync`, ~line 1217): the tool recomputes
@@ -59,6 +61,25 @@ itself automatically, not a concern on its own.
 
 ### Established facts
 
+- **A controlled run on 2026-09-13 reproduced the failure with every known
+  external cause removed.** Beforehand `truenas-backup` had: both periodic
+  snapshot tasks disabled, no Cloud Sync / TrueCloud / Rsync / Replication tasks,
+  the `zfs-rollup` cron disabled, no scrub that month and none running, no SMART
+  self-test running, the four `backup-*` SMB shares disabled, NFS / iSCSI /
+  NVMe-oF all STOPPED with zero shares, no resume tokens, no clones, no snapshot
+  holds beyond zfs_autobackup's own, and no `zfs send`/`recv` process. **It failed
+  anyway**, on `media-ds`, after 18 sequential incrementals had been received
+  successfully in 29 minutes. `middlewared.log` recorded nothing at all from 53
+  minutes before the failure until after it.
+- **The target dataset is never remounted during the transfer.** A 10-second
+  watcher over `backup-pool/encrypted-ds` logged exactly two changes in that run:
+  the script's own `zfs umount` at 15:33:04 and the cleanup's remount at 16:02:07
+  after the failure. `mounted` read `no` continuously in between.
+- **`fuser` and `smbstatus` cannot see the cause.** At the moment of failure both
+  were clean on the target: no process on the mountpoint, no locked files, no SMB
+  sessions at all. EBUSY from `zfs recv` means ZFS holds a *long hold* on the
+  dataset, and neither tool can observe the two cheapest sources of one — a mount
+  surviving in another mount namespace, or a snapshot hold.
 - **This is a mid-transfer failure, not a quick pre-flight check.** For
   these 100GB–3TB-file datasets, a send/receive can already be hours into
   moving data by the time this hits. Confirmed directly from you: the
@@ -70,11 +91,18 @@ itself automatically, not a concern on its own.
   and (2) a precondition-style rejection would fire before any data moves,
   not hours into an already-progressing transfer. Something changes
   **during** the transfer window; it isn't present before the run starts.
-- **Only seen on large-file "backup-\*-ds" style datasets** (100GB–3TB
-  files) — never on VM zvols or `media-ds`. The working hypothesis (huge
-  files → longer send/receive window → more opportunity for something else
-  to touch the target dataset mid-transfer) is plausible and matches this
-  pattern, but is not proof of cause.
+- **Predominantly on the large-file "backup-\*-ds" datasets** (100GB–3TB files),
+  and on 2026-09-13 also on `media-ds`; never yet on VM zvols. The working
+  hypothesis (huge files → longer send/receive window → more opportunity for
+  something to interfere) matches the pattern but is not proof of cause, and the
+  `media-ds` failure came after eighteen *short* transfers rather than one long
+  one.
+- **`--other-snapshots` sends foreign snapshots but never manages them.**
+  `thin_list()` works on `our_snapshots`, filtered by `is_ours()` →
+  `strptime(name, snapshot_time_format)`; `auto-*` names don't parse, so they are
+  never "ours", never obsolete and never destroyed. That is why an
+  `all_snapshots` run logs a single "Destroying" pair and then a long series of
+  pure transfers — useful when reading a failure log.
 - **`zfs_autobackup` has no retry logic anywhere** — confirmed by reading
   `zfs_autobackup/ZfsAutobackup.py` and `ExecuteNode.py` directly (per this
   project's convention of reading the local third-party clone rather than
@@ -93,13 +121,9 @@ itself automatically, not a concern on its own.
 - **No client is known to ever connect to `truenas-backup` directly** — all
   real backup clients have always pointed at `master`/the `data` alias; the
   one exception is a single manual test from the Windows desktop, years ago,
-  during initial setup. This weakens "a live SMB client happens to connect
-  to the target mid-transfer" as the default explanation, and correspondingly
-  strengthens a scheduled-task theory: a task running entirely on
-  `truenas-backup` itself doesn't need any client to be involved at all. It
-  doesn't fully rule out a client — a years-old Windows mapped drive set to
-  auto-reconnect could silently keep trying with zero ongoing awareness —
-  but it's a materially weaker candidate now.
+  during initial setup. Together with the 2026-09-13 readings on the target —
+  `smbstatus -p` and `-S` both empty, no locked files, and the failure happening
+  regardless — this closes out the client-side explanations entirely.
 - **`zfs send` only ever reads from an immutable snapshot, never the live
   mounted filesystem** (established via the send/recv mechanics discussion:
   the destination side receives into the *live* dataset and leaves a
@@ -115,6 +139,37 @@ itself automatically, not a concern on its own.
 
 ### Ruled out
 
+- **A scheduled TrueNAS-internal task on the target.** Falsified by the
+  2026-09-13 controlled run: every schedule was disabled or verified inactive,
+  `middlewared.log` was silent across the whole window, and it failed regardless.
+- **Target-side SMB activity — and with it the "disable the target share for the
+  full sync duration" feature.** Falsified by the same run: the relevant shares
+  were disabled and `smbstatus` showed zero sessions and zero locks. Do not build
+  that feature.
+- **Anything remounting the target dataset mid-transfer.** Falsified by the
+  watcher timeline above.
+- **A mount surviving in a container's mount namespace.** TrueNAS apps are Docker
+  containers with host paths bind-mounted, and `ix-plex-backup-plex-1` does bind
+  `/mnt/backup-pool/encrypted-ds/media-ds` — so this fitted the signature of an
+  EBUSY that `fuser` cannot see. Tested deterministically on 2026-09-13 with Plex
+  running: `zfs umount backup-pool/encrypted-ds/media-ds`, then a scan of every
+  `/proc/[0-9]*/mounts`, returned nothing. The host unmount propagates into the
+  container namespaces, so no app can pin a dataset this way on this system —
+  which generalises to every dataset, not just `media-ds`. The watcher agrees
+  from the other side: across a full successful run it never once recorded
+  `mounted=no` together with a non-zero namespace count.
+- **A teardown race between consecutive send/recv pairs inside `zfs_autobackup`.**
+  Falsified by reading the whole execution chain (`CmdPipe.py`, `ExecuteNode.py`,
+  `ZfsNode.py`, `ZfsDataset.py`, `ZfsAutobackup.py`): `CmdPipe.execute()` loops
+  until every filedescriptor is EOF **and** every process reports `poll() is not
+  None`, only then closes them and calls the exit handlers
+  (`CmdPipe.py:133-168`). Two transfers cannot overlap at process level. The same
+  read shows `automount()` runs only on an *initial* transfer
+  (`ZfsDataset.py:803-807`), so the tool never remounts the target mid-run — an
+  independent confirmation of the watcher result — and `--rollback` fires at most
+  once, before the first transfer. Between two consecutive receives the tool
+  touches the target with metadata calls only: `zfs hold`, `zfs holds`,
+  `zfs release`.
 - **Stale/pre-existing handle causing `umount` itself to silently fail**
   (which motivated plan 01 item 12 — checking `umount`'s exit code). Falsified
   by the mid-transfer timing above: this theory predicted the *next* failure
@@ -143,33 +198,20 @@ itself automatically, not a concern on its own.
 
 ### Live leads (unconfirmed, in priority order)
 
-1. **A scheduled TrueNAS-internal task** on `truenas-backup` — a periodic
-   snapshot task, a scrub, a SMART test, or anything else with its own
-   schedule — touching `backup-pool` (or specifically
-   `backup-pool/encrypted-ds/backup-desktop-ds`) sometime during the
-   multi-hour transfer window. Favored by elimination (see "no known client"
-   above) but not yet directly observed. Genuinely checkable: audit
-   `truenas-backup`'s Data Protection scheduling for anything that could run
-   during the hours these large transfers are typically active.
-2. **Target-side SMB share disable for the full sync duration** (not just a
-   one-time check at the start) — would close the window if the culprit
-   turns out to be SMB-related after all. Mechanism already reasoned through
-   in detail: unmounting the dataset (which the script already does)
-   already stops a share from serving anything at that path, so disabling
-   the share adds nothing beyond a *successfully-checked* unmount **at the
-   moment the unmount happens** — but it also does **not** retroactively
-   close a connection a client already had open before the sync started,
-   which is the actual gap a full-duration disable would close, if the
-   cause is SMB at all. Deliberately **not built yet**: it only helps if the
-   culprit is SMB-related — if it's actually a scheduled ZFS/TrueNAS-level
-   task, disabling a Samba share does nothing, since that operates below
-   the Samba layer entirely. Building this before knowing which theory is
-   right risks solving a problem that isn't the one you have. If built:
-   scope to all shares matching that run's `IMPACTED_DATASETS`, target side
-   only, guaranteed re-enable via the shared cleanup stack in
-   `lib/common.bash` (`Register_cleanup`/`Run_cleanup` — the same mechanism
-   plan 01 item 14 uses for remounting).
-3. **Exit-code-aware partial-failure handling** — capture `zfs_autobackup`'s
+1. **An asynchronous `zfs destroy` still holding the dataset when the receive
+   begins.** `_pre_clean()` destroys every obsolete target snapshot immediately
+   before the first `zfs recv` (`ZfsDataset.py:999-1031`), and `--keep-target=0`
+   makes that everything except the common snapshot. `zfs destroy` returns as
+   soon as its transaction commits while block freeing continues in the
+   background, so the dataset can still be held when the next call arrives.
+   Fits every observation: invisible to every userspace tool, worse the larger
+   the snapshot being freed, intermittent, and it is the only heavyweight ZFS
+   operation the tool aims at the target dataset right before the failing call.
+   **Not verified:** that an in-flight async destroy produces this specific
+   EBUSY is where the code points, not something read in the ZFS source.
+   The correlation to capture is `freeing` being non-zero on the pool at the
+   moment of failure — now part of the diagnostics.
+2. **Exit-code-aware partial-failure handling** — capture `zfs_autobackup`'s
    actual exit code (1–254 = "N datasets failed, everything else completed,
    the tool's own graceful degradation" vs. 255 = "top-level exception or
    `KeyboardInterrupt`, categorically worse") and treat them differently —
@@ -180,36 +222,37 @@ itself automatically, not a concern on its own.
    already-isolated dataset failure is expensive), but doesn't address the
    *cause* — only limits the blast radius.
 
-### Diagnostics — built and confirmed working
+### Diagnostics — built, then extended after they came up empty
 
-Plan 01 items 12/13 added automatic `fuser -vm` + `smbstatus -L` capture on
-both target and source whenever a mount/umount or `zfs_autobackup` failure
-occurs (shared `l_Print_diagnostics()` helper, cleanly formatted). **Confirmed
-working end-to-end** via a deliberate kill-test (2026-07-03): diagnostics
-fired correctly on both sides (this is what surfaced and then let us retract
-the Veeam lead above), and plan 01 item 14's guaranteed-remount cleanup fired
-correctly too. What's still needed is for this to catch a **real**
-occurrence rather than an artificial one — nothing observed so far changes
-the leads above; the most decisive single piece of evidence would still be
-`smbstatus` output captured at the moment of a genuine failure, which the
-diagnostics now do automatically without needing anyone watching live.
+Plan 01 items 12/13 added automatic `fuser -vm` + `smbstatus -L` capture on both
+target and source whenever a mount/umount or `zfs_autobackup` failure occurs
+(shared `l_Print_diagnostics()` in `lib/rep_filesystems.bash`). They fire
+correctly on both sides, and plan 01 item 14's guaranteed-remount cleanup fires
+with them. On the 2026-09-13 failure they produced nothing at all on the target
+— which is itself the finding above: both tools are blind to a ZFS long hold.
+
+`l_Print_diagnostics()` therefore now also captures, per dataset, on both hosts:
+- **mount namespaces still holding the dataset**, counted per program name, and
+  only while the host reports it unmounted (on the source, still mounted, every
+  process would match, so it reports that instead of dumping hundreds of lines);
+- **snapshots carrying a hold** (`userrefs > 0`);
+- **running `zfs send`/`recv` processes**;
+- **the pool's `freeing` value plus health and scan state** — the async-destroy
+  backlog, which is the one remaining lead's only observable.
+
+The next genuine failure should name its own cause rather than come back empty.
 
 ### Next steps, in priority order
 
-1. **Do plan 02 (failure email) regardless** — highest-leverage, lowest-risk,
-   and more clearly urgent given this can fail hours into an unattended
-   overnight run with nobody notified for days.
-2. **Audit `truenas-backup`'s scheduled tasks** (Data Protection: snapshot
-   tasks, scrub, SMART tests) for anything that could run during a large
-   transfer's multi-hour window — the most promising lead by elimination.
-3. **Wait for the diagnostics to catch a real occurrence** — check both
-   `fuser` output (anything other than `root kernel mount`?) and whether
-   `smbstatus` shows anything on the target at the time. This is the
-   cheapest remaining way to convert "known pattern" into "known cause."
-4. **Only after 2–3 point at SMB specifically:** build the
-   target-share-disable feature (design above).
-5. **Exit-code-aware partial-failure handling** (design above) — lower
-   priority since it limits impact rather than addressing the cause.
+1. **Let the extended diagnostics catch a real `backup-*-ds` failure** and check
+   whether `freeing` is non-zero at that moment (lead 1). That is the common
+   case, and the only lead left is unproven.
+2. **If `freeing` correlates, confirm the mechanism in the ZFS source** before
+   building anything — specifically which paths return EBUSY from
+   `dmu_recv_begin_check()`. A fix would then be a bounded wait for `freeing` to
+   drain before `zfs_autobackup` is invoked, which belongs in this wrapper.
+3. **Exit-code-aware partial-failure handling** (design above) — lower priority
+   since it limits impact rather than addressing the cause.
 
 ---
 

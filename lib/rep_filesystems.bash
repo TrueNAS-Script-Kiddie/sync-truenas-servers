@@ -31,9 +31,14 @@ function Perform_filesystem_replication() {
         fi
     }
 
-    # Prints fuser/smbstatus diagnostics for one or more datasets on one location,
-    # with consistent indentation/headers matching the rest of this script's output.
-    # Shared by both failure points below (pre-flight umount, and zfs_autobackup itself).
+    # Prints diagnostics for one or more datasets on one location, with consistent
+    # indentation/headers matching the rest of this script's output. Shared by both
+    # failure points below (pre-flight umount, and zfs_autobackup itself).
+    #
+    # A 'dataset is busy' EBUSY from zfs recv is a ZFS long hold, which neither
+    # fuser nor smbstatus can observe. The hold, send/recv and freeing checks below
+    # cover what can cause one. The mount-namespace check is a negative control:
+    # measured clean, kept because it re-establishes that in one line.
     function l_Print_diagnostics() {
         local LOCATION_MODE="$1"
         local SERVER_ID="$2"
@@ -41,6 +46,7 @@ function Perform_filesystem_replication() {
         shift 3
         local -a DATASETS=( "$@" )
         local DS
+        local POOL="${PARENT_DATASET%%/*}"
 
         echo
         echo "  --- Diagnostics: truenas-${SERVER_ID} ---"
@@ -51,8 +57,34 @@ function Perform_filesystem_replication() {
                 echo
                 echo "    fuser -vm /mnt/${PARENT_DATASET}/${DS}:"
                 Execute_command "${LOCATION_MODE}" "fuser -vm '/mnt/${PARENT_DATASET}/${DS}' 2>&1" | column -t | sed 's/^/      /'
+
+                # Only meaningful while the host has it unmounted: then every hit is a
+                # namespace that still pins it. On the source (still mounted) every
+                # process would match, so report that instead of dumping hundreds of lines.
+                echo
+                echo "    mount namespaces still holding /mnt/${PARENT_DATASET}/${DS}:"
+                Execute_command "${LOCATION_MODE}" "if [ \"\$(zfs get -H -o value mounted '${PARENT_DATASET}/${DS}' 2>/dev/null)\" = yes ]; then echo '(mounted on this host — check not meaningful)'; else PIDS=\$(grep -l ' /mnt/${PARENT_DATASET}/${DS} zfs ' /proc/[0-9]*/mounts 2>/dev/null | cut -d/ -f3 | tr '\\n' ' '); if [ -z \"\$PIDS\" ]; then echo '(none)'; else ps -o comm= -p \$PIDS 2>/dev/null | sort | uniq -c | sort -rn; fi; fi" | sed 's/^/      /'
             done
         fi
+
+        echo
+        echo "    snapshots with a hold (userrefs > 0):"
+        for DS in "${DATASETS[@]}"; do
+            Execute_command "${LOCATION_MODE}" "zfs get -r -t snapshot -H -o name,value userrefs '${PARENT_DATASET}/${DS}' 2>&1 | awk '\$2>0'"
+        done | sed 's/^/      /'
+
+        echo
+        echo "    running zfs send/recv processes:"
+        Execute_command "${LOCATION_MODE}" "ps -eo pid,etime,args | grep -E 'zfs (send|recv|receive)' | grep -v grep" | sed 's/^/      /'
+
+        # 'freeing' is the async-destroy backlog: zfs destroy returns as soon as its
+        # transaction commits, while block freeing continues in the background. A
+        # non-zero value at the moment of an EBUSY is the correlation to look for,
+        # since nothing in userspace can observe that hold.
+        echo
+        echo "    pool ${POOL} — async-destroy backlog and scan state:"
+        Execute_command "${LOCATION_MODE}" "zpool get -H -o property,value freeing,health '${POOL}' 2>&1; zpool status '${POOL}' 2>&1 | grep -E '^[[:space:]]*(state|scan):'" | sed 's/^/      /'
+
         echo
         echo "    smbstatus -L (locked files):"
         Execute_command "${LOCATION_MODE}" "smbstatus -L 2>&1" | sed 's/^/      /'
