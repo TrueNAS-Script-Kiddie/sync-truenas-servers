@@ -34,6 +34,7 @@ New-host deploy: SFTP doesn't set the exec bit on new files — `chmod +x bin/sy
   - [immich_db.bash](lib/immich_db.bash) — `Backup_immich_DB` / `Restore_immich_DB` wired as `pre_action` / `post_action` in `apps.json`.
 - [config/](config/) — `apps.json` (app replication spec), `vm_device_mappings.json` (per-dtype path/NIC/display rewrites master↔backup), `app_config_mappings.json` (app-config rewrites master↔backup; spec in `app_divergences.md`), `config.local.bash` (untracked, provides `EMAIL_TO` + `SSH_CONFIG_FILE`), `config.example.bash` (template).
   - `SSH_CONFIG_FILE` must point at `/mnt/<master|backup>-pool/homedir-ds/home/root/.ssh/config` — root's *second* home — `/root` sits in the appliance's boot environment and is replaced by an update, so persistent files live on a data pool instead; unencrypted on purpose, so it is reachable after a reboot before anything is unlocked. That key is what the two hosts authenticate to each other with, so `homedir-ds` is not leftover clutter even though the scripts that once lived in its `bin/` have moved to `app-ds`.
+- [tools/](tools/) — standalone diagnostics, not part of a replication run. [mountwatch.sh](tools/mountwatch.sh) instruments a sync on the *target* host for the unresolved "dataset is busy" failures (see [plans/08](plans/08-known-operational-issues.md)); start it by hand with `setsid`, and keep its log off `/tmp` (tmpfs + noexec on TrueNAS). Deployed by SFTP like `bin/` and `lib/`.
 - `logs/`, `tmp/` — runtime only (gitignored).
 
 ## Essential commands
