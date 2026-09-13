@@ -27,11 +27,13 @@ New-host deploy: SFTP doesn't set the exec bit on new files — `chmod +x bin/sy
   - [cli.bash](lib/cli.bash) — `Process_command_line_options`, `Help`. Sets `TASK`, `PERFORM_*` flags, `APP_LIST`, `VM_LIST`, and the `LOCAL_SOURCE`/`REMOTE_SOURCE`/`LOCAL_TARGET`/`REMOTE_TARGET` direction vars.
   - [rep_apps.bash](lib/rep_apps.bash) — `Perform_app_replication`, `Control_app`, `Control_app_with_checks`. Driven by [config/apps.json](config/apps.json).
   - [rep_vms.bash](lib/rep_vms.bash) — `Extract_vm_definitions`, `Transform_vm_definition`, VM replication pipeline. Writes per-VM JSON under `tmp/vms/json/per_vm/`. Driven by [config/vm_device_mappings.json](config/vm_device_mappings.json).
+  - [rep_app_definitions.bash](lib/rep_app_definitions.bash) — `Perform_app_definition_replication` (plan 06 phase 2): extract→transform→`app.create`/`app.update` of app *definitions*, mirroring the VM pattern. Manual-only subtask (not in `all`); never `app.delete`; skips a RUNNING target app. Writes per-app JSON under `tmp/apps/json/per_app/`. Driven by [config/app_config_mappings.json](config/app_config_mappings.json). midclt payload shapes unverified — see [plans/06-phase0-findings.md](plans/06-phase0-findings.md) before first real use.
   - [rep_filesystems.bash](lib/rep_filesystems.bash) — `Perform_filesystem_replication` (scopes: `all_snapshots`, `latest_snapshot_only`, `vm_latest_snapshot_only`). Discovers impacted datasets via `autobackup:<task_scope>` ZFS property.
   - [snap_rollup.bash](lib/snap_rollup.bash) — `Perform_snapshot_rollup`. Shells out to `../../zfs-rollup/rollup.py`.
   - [docker.bash](lib/docker.bash) — `Control_docker_containers`, `Wait_for_docker_state`.
   - [immich_db.bash](lib/immich_db.bash) — `Backup_immich_DB` / `Restore_immich_DB` wired as `pre_action` / `post_action` in `apps.json`.
-- [config/](config/) — `apps.json` (app replication spec), `vm_device_mappings.json` (per-dtype path/NIC/display rewrites master↔backup), `config.local.bash` (untracked, provides `EMAIL_TO` + `SSH_CONFIG_FILE`), `config.example.bash` (template).
+- [config/](config/) — `apps.json` (app replication spec), `vm_device_mappings.json` (per-dtype path/NIC/display rewrites master↔backup), `app_config_mappings.json` (app-config rewrites master↔backup; spec in `app_divergences.md`), `config.local.bash` (untracked, provides `EMAIL_TO` + `SSH_CONFIG_FILE`), `config.example.bash` (template).
+  - `SSH_CONFIG_FILE` must point at `/mnt/<master|backup>-pool/homedir-ds/home/root/.ssh/config` — root's *second* home, deliberately on an unencrypted dataset because the appliance won't let root's real homedir be repointed. That key is what the two hosts authenticate to each other with, so `homedir-ds` is not leftover clutter even though the scripts that once lived in its `bin/` have moved to `app-ds`.
 - `logs/`, `tmp/` — runtime only (gitignored).
 
 ## Essential commands
@@ -47,6 +49,9 @@ bash -n lib/rep_apps.bash
 # Real run, single subtask / single app or VM
 ./bin/sync_truenas_servers --task=master_to_backup --subtask=app_replication --app=immich
 ./bin/sync_truenas_servers --task=backup_to_master --subtask=vm_replication --vm=VM1 --vm=VM2
+
+# App-definition replication (manual-only; always --test first — see plans/06-phase0-findings.md)
+./bin/sync_truenas_servers --test --task=master_to_backup --subtask=app_definition_replication --app=immich
 ```
 
 Note: the foreground wrapper always exits 0; success/failure is signaled by
