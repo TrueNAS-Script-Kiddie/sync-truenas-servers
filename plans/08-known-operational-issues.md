@@ -242,6 +242,30 @@ with them. On the 2026-09-13 failure they produced nothing at all on the target
 
 The next genuine failure should name its own cause rather than come back empty.
 
+### Live experiment — SMB service stopped on the target (2026-09-13)
+
+An observation the diagnostics did not surface, from the same day's runs:
+`media-ds` failed while every `backup-*-ds` succeeded, and `media-ds` was the one
+whose SMB share was **enabled** — the four `backup-*` shares were disabled at the
+time.
+
+The readings argue against a client being involved: `smbstatus -L`, `-p` and `-S`
+on the target were all empty at the moment of failure. So if Samba is implicated
+at all, it is the share definition or the service itself, not a connection.
+
+**Change made:** every SMB share on `truenas-backup` enabled, and the **SMB
+service itself stopped**. That is a cleaner cut than toggling shares one by one —
+if the next failure still happens, Samba is out entirely, share definitions
+included. If the failures stop, the mechanism is inside Samba and the
+share-level question becomes worth asking properly.
+
+Operationally free: `truenas-backup` only serves clients when the `data` alias is
+repointed to it. ⚠️ Which also means a failover now needs the SMB service started
+by hand — a stopped service will not announce itself, it will just look like the
+share is gone.
+
+Result pending: the next full sync, expected within weeks.
+
 ### Next steps, in priority order
 
 1. **Let the extended diagnostics catch a real `backup-*-ds` failure** and check
