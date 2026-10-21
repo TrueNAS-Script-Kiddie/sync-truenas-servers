@@ -8,12 +8,14 @@
 #     warning — it may be a test-in-progress and must never be clobbered.
 #   - Manual-only subtask: not part of --subtask=all or the no-subtask default.
 #
-# The midclt app.* payload shapes assumed here are UNVERIFIED on Goldeye — every
-# assumption site is marked VERIFY(phase0); see plans/06-phase0-findings.md.
+# midclt app.* payload shapes verified on Goldeye: plans/06-phase0-findings.md.
 
 # Workspace
 APP_DEF_TMP_DIR="${SCRIPT_DIR}/../tmp/apps"
 mkdir -p "${APP_DEF_TMP_DIR}/json/per_app"
+
+# app.config keys the middleware regenerates on every create/update — never part of the payload
+APP_DEF_SERVER_KEYS='del(.ix_context, .ix_certificates, .ix_certificate_authorities, .ix_volumes, .release_name)'
 
 declare SOURCE_ALL_APP_JSON
 declare TARGET_ALL_APP_JSON
@@ -53,7 +55,6 @@ function Extract_app_definitions() {
         SERVER_ID_VAR="${SOURCE_OR_TARGET}_SERVER_ID"
         SERVER_ID="${!SERVER_ID_VAR}"
 
-        # VERIFY(phase0 item 1): assumed fields .name/.state/.version/.custom_app/.metadata.{train,name}
         # shellcheck disable=SC2034  # nameref write-through to SOURCE_ALL_APP_JSON/TARGET_ALL_APP_JSON
         ALL_APP_JSON_REF="$(Execute_command "${LOCATION}" "midclt call app.query" 2>/dev/null)" \
             || Background_error "ERROR: truenas-${SERVER_ID} - Failed to query app definitions"
@@ -65,10 +66,9 @@ function Extract_app_definitions() {
                 continue
             fi
 
-            # VERIFY(phase0 item 2): assumed app.config output = the 'values' object app.create/update accept
             APP_CONFIG_JSON="$(Execute_command "${LOCATION}" "midclt call app.config \"${FULL_APP_NAME}\"" 2>/dev/null)" \
                 || Background_error "ERROR: truenas-${SERVER_ID} - Failed to get config of '${FULL_APP_NAME}'"
-            jq . <<<"${APP_CONFIG_JSON}" > "${APP_DEF_TMP_DIR}/json/per_app/${APP_NAME}.truenas-${SERVER_ID}.${SOURCE_OR_TARGET,,}.json" \
+            jq "${APP_DEF_SERVER_KEYS}" <<<"${APP_CONFIG_JSON}" > "${APP_DEF_TMP_DIR}/json/per_app/${APP_NAME}.truenas-${SERVER_ID}.${SOURCE_OR_TARGET,,}.json" \
                 || Background_error "ERROR: truenas-${SERVER_ID} - app.config of '${FULL_APP_NAME}' did not return valid JSON"
 
             echo "truenas-${SERVER_ID} - Extracted ${APP_DEF_TMP_DIR}/json/per_app/${APP_NAME}.truenas-${SERVER_ID}.${SOURCE_OR_TARGET,,}.json"
@@ -188,13 +188,12 @@ function Apply_app_definition() {
 
     if [[ -z "${TARGET_STATE}" || "${TARGET_STATE}" == "null" ]]; then
         # Absent → create with the source's exact catalog coordinates.
-        # VERIFY(phase0 items 1+3): field names and app.create payload keys.
         local TRAIN CATALOG_APP VERSION
         TRAIN="$(jq -r --arg N "${SOURCE_FULL_NAME}" '.[] | select(.name==$N) | .metadata.train' <<<"${SOURCE_ALL_APP_JSON}")"
         CATALOG_APP="$(jq -r --arg N "${SOURCE_FULL_NAME}" '.[] | select(.name==$N) | .metadata.name' <<<"${SOURCE_ALL_APP_JSON}")"
         VERSION="$(jq -r --arg N "${SOURCE_FULL_NAME}" '.[] | select(.name==$N) | .version' <<<"${SOURCE_ALL_APP_JSON}")"
         { [[ -n "${TRAIN}" && "${TRAIN}" != "null" && -n "${CATALOG_APP}" && "${CATALOG_APP}" != "null" && -n "${VERSION}" && "${VERSION}" != "null" ]]; } \
-            || Background_error "ERROR: Could not determine train/catalog_app/version for '${SOURCE_FULL_NAME}' — the assumed app.query field names are wrong; verify per plans/06-phase0-findings.md item 1."
+            || Background_error "ERROR: Could not determine train/catalog_app/version for '${SOURCE_FULL_NAME}' from app.query (see plans/06-phase0-findings.md item 1)."
 
         PAYLOAD="$(jq -nc \
             --arg app_name "${TARGET_FULL_NAME}" --arg train "${TRAIN}" \
@@ -215,7 +214,6 @@ function Apply_app_definition() {
         Wait_for_app_job "${JOBID}" "${TARGET_LOCATION}" "app.create of '${TARGET_FULL_NAME}' (if version ${VERSION} is unavailable on the target, sync catalogs first)"
 
     elif [[ "${TARGET_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
-        # VERIFY(phase0 item 3): app.update payload {values: ...}.
         PAYLOAD="$(jq -nc --argjson values "${VALUES_JSON}" '{values: $values}')"
 
         echo -n "Updating app '${TARGET_FULL_NAME}' (state ${TARGET_STATE}) on truenas-${TARGET_SERVER_ID}...${TEST_MODE:+" (Not done because of '--test' usage!)"}"
@@ -238,7 +236,7 @@ function Apply_app_definition() {
 
     # Post-apply check: differences only WARN — server-added defaults are expected
     # noise on the first runs (see plans/06-phase0-findings.md).
-    POST_CONFIG="$(Execute_command "${TARGET_LOCATION}" "midclt call app.config \"${TARGET_FULL_NAME}\"" 2>/dev/null)"
+    POST_CONFIG="$(Execute_command "${TARGET_LOCATION}" "midclt call app.config \"${TARGET_FULL_NAME}\"" 2>/dev/null | jq "${APP_DEF_SERVER_KEYS}")"
     if ! diff <(jq -S . <<<"${POST_CONFIG}") <(jq -S . "${TRANSFORMED_APP_JSON_FILE}") >/dev/null 2>&1; then
         echo "  WARNING: target config after apply differs from the transformed definition:"
         diff <(jq -S . <<<"${POST_CONFIG}") <(jq -S . "${TRANSFORMED_APP_JSON_FILE}") | sed 's/^/    /'
@@ -285,7 +283,7 @@ function Perform_app_definition_replication() {
 
         CUSTOM_APP="$(jq -r --arg N "${SOURCE_FULL_NAME}" '.[] | select(.name==$N) | .custom_app // false' <<<"${SOURCE_ALL_APP_JSON}")"
         if [[ "${CUSTOM_APP}" == "true" ]]; then
-            # VERIFY(phase0 item 1): custom apps need a custom_compose_config payload — unsupported until verified.
+            # Custom apps need a custom_compose_config payload — unsupported until verified.
             echo "  !!! WARNING: '${SOURCE_FULL_NAME}' is a custom app — skipped (compose payload shape unverified, see plans/06-phase0-findings.md)."
             echo
             ((SKIPPED++))

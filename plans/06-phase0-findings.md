@@ -1,78 +1,80 @@
 # Plan 06 — Phase 0 findings (Goldeye `midclt app.*` shapes)
 
-**Status: NOT YET RUN ON A HOST.** Phase 2 code was written offline against the
-assumptions below. Run each command on `truenas-master` as root, record the
-answer here, and fix the code wherever an assumption is wrong — every
-assumption site is marked `VERIFY(phase0)` (grep for it).
+**Status: done 2026-10-21** on both hosts (read-only `midclt` queries; configs
+captured with secret values redacted). All assumed payload shapes hold; one
+code change followed (strip server-managed keys, item 2).
 
-## 1. Shape of an app object (`app.query`)
+## 1. Shape of an app object (`app.query`) — ✅ as assumed
 
 ```bash
 midclt call app.query | jq '.[0] | keys'
 midclt call app.query | jq '.[] | {name, state, custom_app, version, train: .metadata?.train?}'
 ```
 
-Answer: _(fill in)_
+Keys: `active_workloads custom_app human_version id image_updates_available
+latest_version metadata migrated name notes portals state upgrade_available
+version`. `.version` = installed catalog version, `.metadata.train` = train
+(`stable`/`community`), `.metadata.name` = catalog app id (`immich`, `plex`).
 
-Assumed by the code (`lib/rep_app_definitions.bash`):
-- `.name`, `.state` (values `RUNNING`/`STOPPED`/`CRASHED`/`DEPLOYING`), `.custom_app`
-- `.version` = installed version
-- `.metadata.train` = catalog train, `.metadata.name` = catalog app id
+Custom apps: `hermes-agent` (`custom_app: true`) — not in `apps.json`. The
+`ix-app` apps (`loki`, `promtail`, `syslog-ng`) report `custom_app: false`
+with catalog app `ix-app`; also not in `apps.json`.
 
-## 2. Full config of one app (`app.config`)
+## 2. Full config of one app (`app.config`) — ⚠️ includes server-managed keys
 
 ```bash
-midclt call app.config immich-master | jq . > /root/immich-master.config.json
+midclt call app.config immich-master | jq .
 ```
 
-Answer: _(fill in)_
+Top level = the app's user values **plus** keys the middleware generates:
+`ix_context` (app name, operation, version/upgrade metadata), `ix_certificates`,
+`ix_certificate_authorities`, `ix_volumes`, `release_name`. These are rebuilt on
+every create/update, so `Extract_app_definitions` strips them
+(`APP_DEF_SERVER_KEYS`); the post-apply check strips them too. Everything else
+round-trips.
 
-Assumed: the `app.config` output is the `values` object that `app.create` /
-`app.update` accept round-trip. If the server adds read-only keys that
-`app.*` rejects (e.g. `ix_volumes` internals, `ix_certificates`), add a
-`del(...)` strip at the top of the jq program in `Transform_app_definition`.
+Secrets in values: Immich `immich.db_password`, `immich.redis_password`; Plex
+`plex.claim_token`. They replicate like any other value — see
+`config/app_divergences.md` for the Plex claim-token caveat.
 
-## 3. `app.create` / `app.update` signatures
+## 3. `app.create` / `app.update` signatures — ✅ as assumed
 
 ```bash
 midclt call core.get_methods | jq '."app.create", ."app.update"'
 ```
 
-Answer: _(fill in)_
+Identical on both hosts. Both are jobs (`job: true`) → `midclt call` returns a
+job id, pollable via `core.get_jobs`.
+- `app.create {app_name (required), train="stable", catalog_app, version="latest", values, custom_app=false, custom_compose_config, custom_compose_config_string}`
+- `app.update <app_name> {values, custom_compose_config, custom_compose_config_string}` — no version: an update keeps the target's installed version.
 
-Assumed:
-- `app.create` accepts `{app_name, train, catalog_app, version, values}` and
-  returns a **job id**;
-- `app.update` accepts `<name> {values: ...}` and returns a **job id**;
-- both jobs are pollable via `core.get_jobs` (same as `app.start`/`app.stop`).
-
-## 4. Version availability on the target
+## 4. Version availability on the target — ⚠️ catalogs differ per host
 
 ```bash
 midclt call app.available | jq '.[] | select(.name=="immich") | {name, train, latest_version}'
-# check both hosts show the same version for one app
 ```
 
-Answer: _(fill in — note where the *full* installable-versions list comes from)_
+`app.available` gives only `latest_version`; no full installable-versions list
+found yet, so `Apply_app_definition` still has no pre-check (open). Each host's
+catalog reports its own installed version as latest:
 
-The code has **no pre-check**: `app.create` is attempted with the source's
-exact version and the submit/job failure message says to sync catalogs (it
-never falls back to "latest"). If a reliable availability query exists,
-add a pre-check in `Apply_app_definition`.
+| App | master | backup |
+|---|---|---|
+| immich | 1.14.56 (Immich v3.3.4) | 1.14.58 (v3.3.5) |
+| plex | 1.3.19 | 1.3.19 |
 
-## 5. Same `app.config` on `truenas-backup`
+An `app.create` on a host whose catalog lacks the source's version fails with
+the "sync catalogs" error; `app.update` is unaffected (item 3).
 
-Repeat step 2 on backup for the same app — feeds the phase 1 diff
-(`config/app_divergences.md`).
+## 5. Same `app.config` on `truenas-backup` — ✅ captured
+
+Master-vs-backup diff classified in `config/app_divergences.md`.
 
 ## Other assumptions baked into the code
 
 - **custom apps** (`custom_app: true`) are skipped with a warning — the
   compose-config payload shape is unverified.
-- App create/update job wait: `core.get_jobs` polling, 600 s timeout (image
-  pulls are slow; deliberately longer than `Control_app`'s 60 s).
-- Post-apply check: target `app.config` is diffed against the transformed
-  JSON; differences only WARN (server-added defaults are expected noise —
-  tighten after the first real run).
-- The jq transform uses `walk()` (jq ≥ 1.6) — verify with the first `--test`
-  run; there is no jq on the Windows side to pre-check the program.
+- App create/update job wait: `core.get_jobs` polling, 600 s timeout.
+- Post-apply check: target `app.config` (server keys stripped) is diffed
+  against the transformed JSON; differences only WARN.
+- ✅ The jq transform (`walk()`, lookaround regex) runs on the hosts' jq 1.6.

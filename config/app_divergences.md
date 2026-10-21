@@ -1,7 +1,8 @@
 # App config divergences (plan 06 phase 1 — spec for `app_config_mappings.json`)
 
-**Status: TEMPLATE — fill from live diffs.** Per app in `apps.json`, after
-phase 0 saved both configs:
+**Status: diffed 2026-10-21; bucket (b) not yet converged, two rows await a
+decision.** Server-managed keys (`ix_*`, `release_name`) are stripped before
+diffing and never synced. Per app in `apps.json`:
 
 ```bash
 diff <(jq -S . /root/<app>-master.config.json) <(jq -S . /root/<app>-backup.config.json)
@@ -33,14 +34,21 @@ Certificate ids: `midclt call certificate.query | jq '.[] | {id, name}'` on each
 
 ## plex
 
-_(fill in from diff)_
-
 | Field | Bucket | master | backup | Action |
 |---|---|---|---|---|
+| `network.web_port.port_number` | b | `32400` | `33400` | converge on `32400` (Plex default) |
+| `plex.allowed_networks` | b | `192.168.0.0/16` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | converge |
+| `resources.limits.cpus` | a or b — decide | `4` | `2` | hardware-dependent → `value_overrides` rule; otherwise converge |
+| `storage.transcode` | a or b — decide | `type: temporary` | `type: tmpfs`, `tmpfs_config.size: 2048` | RAM-dependent → keep per host (needs a rule type for objects); otherwise converge |
+| `plex.claim_token` | a | _(redacted)_ | _(redacted)_ | plex.tv identity; a claim token expires minutes after issue, so a stored one is stale — clear it on both hosts |
+| `storage.config`, `storage.logs` host paths | c | `ssdmaster-pool/…/app-ds/plex-ds` | `backup-pool/…/app-ds/plex-ds` | in `string_rewrites` |
+| `storage.data.host_path_config.acl.path` | c | `master-pool/encrypted-ds/media-ds` | `backup-pool/encrypted-ds/media-ds` | in `string_rewrites` |
 
 ## immich
 
-_(fill in from diff)_
-
 | Field | Bucket | master | backup | Action |
 |---|---|---|---|---|
+| `network.web_port.port_number` | b | `30041` | `30042` | converge (pick one) |
+| installed catalog version | b | `1.14.56` (Immich v3.3.4) | `1.14.58` (v3.3.5) | refresh master's catalog, upgrade `immich-master` |
+| `immich.db_password`, `immich.redis_password` | ? | _(redacted)_ | _(redacted)_ | compare by hash; differing values make an update change the target's |
+| `storage.data`, `storage.postgres_data` host paths | c | `ssdmaster-pool/…/immich-ds/…` | `backup-pool/…/immich-ds/…` | in `string_rewrites` |
