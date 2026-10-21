@@ -174,7 +174,7 @@ function Apply_app_definition() {
     local SOURCE_FULL_NAME="${APP_NAME}-${SOURCE_SERVER_ID}"
     local TARGET_FULL_NAME="${APP_NAME}-${TARGET_SERVER_ID}"
     local TARGET_APP_JSON_FILE="${APP_DEF_TMP_DIR}/json/per_app/${APP_NAME}.truenas-${TARGET_SERVER_ID}.target.json"
-    local TARGET_STATE VALUES_JSON PAYLOAD JOBID POST_CONFIG
+    local TARGET_STATE VALUES_JSON PAYLOAD QUOTED_PAYLOAD JOBID POST_CONFIG
 
     TARGET_STATE="$(jq -r --arg N "${TARGET_FULL_NAME}" '.[] | select(.name==$N) | .state' <<<"${TARGET_ALL_APP_JSON}")"
     VALUES_JSON="$(jq -c . "${TRANSFORMED_APP_JSON_FILE}")"
@@ -207,7 +207,9 @@ function Apply_app_definition() {
         echo "  truenas-${TARGET_SERVER_ID} - midclt call app.create (values from ${TRANSFORMED_APP_JSON_FILE})"
         [[ -n "${TEST_MODE}" ]] && { echo; return 0; }
 
-        JOBID="$(Execute_command "${TARGET_LOCATION}" "midclt call app.create '${PAYLOAD}'")"
+        # ' -> '\'' so a quote in a config value can't end the shell argument early
+        QUOTED_PAYLOAD=${PAYLOAD//"'"/"'\''"}
+        JOBID="$(Execute_command "${TARGET_LOCATION}" "midclt call app.create '${QUOTED_PAYLOAD}'")"
         [[ "${JOBID}" =~ ^[0-9]+$ ]] \
             || Background_error "ERROR: app.create for '${TARGET_FULL_NAME}' did not return a job id. Output: ${JOBID}\nIf version ${VERSION} is not available on truenas-${TARGET_SERVER_ID}, sync/refresh its catalog first — this pipeline never falls back to 'latest'."
         Wait_for_app_job "${JOBID}" "${TARGET_LOCATION}" "app.create of '${TARGET_FULL_NAME}' (if version ${VERSION} is unavailable on the target, sync catalogs first)"
@@ -221,7 +223,8 @@ function Apply_app_definition() {
         echo "  truenas-${TARGET_SERVER_ID} - midclt call app.update ${TARGET_FULL_NAME} (values from ${TRANSFORMED_APP_JSON_FILE})"
         [[ -n "${TEST_MODE}" ]] && { echo; return 0; }
 
-        JOBID="$(Execute_command "${TARGET_LOCATION}" "midclt call app.update \"${TARGET_FULL_NAME}\" '${PAYLOAD}'")"
+        QUOTED_PAYLOAD=${PAYLOAD//"'"/"'\''"}
+        JOBID="$(Execute_command "${TARGET_LOCATION}" "midclt call app.update \"${TARGET_FULL_NAME}\" '${QUOTED_PAYLOAD}'")"
         [[ "${JOBID}" =~ ^[0-9]+$ ]] \
             || Background_error "ERROR: app.update for '${TARGET_FULL_NAME}' did not return a job id. Output: ${JOBID}"
         Wait_for_app_job "${JOBID}" "${TARGET_LOCATION}" "app.update of '${TARGET_FULL_NAME}'"
