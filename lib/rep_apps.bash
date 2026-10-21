@@ -29,6 +29,24 @@ function Control_app() {
     fi
 }
 
+# Explain a source/target app version mismatch and how to fix it in the GUI.
+# Usage: Print_app_version_mismatch <APP_NAME> <WHAT> <SOURCE_VERSION> <TARGET_VERSION>
+function Print_app_version_mismatch() {
+    local APP_NAME="$1"
+    local WHAT="$2"
+    local SOURCE_VERSION="$3"
+    local TARGET_VERSION="$4"
+    local OLDER_SERVER_ID="${TARGET_SERVER_ID}"
+
+    [[ "$(printf '%s\n' "${SOURCE_VERSION}" "${TARGET_VERSION}" | sort -V | head -n1)" == "${SOURCE_VERSION}" ]] \
+        && OLDER_SERVER_ID="${SOURCE_SERVER_ID}"
+
+    echo "Replication skipped for app ${APP_NAME}: ${WHAT} differs — ${SOURCE_SERVER_ID}: ${SOURCE_VERSION}, ${TARGET_SERVER_ID}: ${TARGET_VERSION}."
+    echo "  Fix on TrueNAS-${OLDER_SERVER_ID^}: Apps → Discover Apps → Refresh Catalog, then Apps → Installed → ${APP_NAME}-${OLDER_SERVER_ID} → Update"
+    echo "  (reload the page if it still says 'Up to date'; if no update is offered at all, that host's TrueNAS release may be too old for the newer version)."
+    echo
+}
+
 function Control_app_with_checks() {
     local APP_NAME="$1"
     local ACTION="$2"
@@ -91,6 +109,10 @@ function Perform_app_replication() {
     local -a SELECTED_APP_JSON_LIST
     local -a APP_JSON_LIST
     local TARGET_APP_STATE
+    local SOURCE_APP_VERSION
+    local TARGET_APP_VERSION
+    local SUCCEEDED=0
+    local SKIPPED=0
     local APP_NAME
     local JSON_APP_NAME
     local APP_JSON
@@ -140,6 +162,28 @@ function Perform_app_replication() {
         FULL_SOURCE_PATH="$([[ "${SOURCE_LOCATION}" == "remote" ]] && echo "truenas-${SOURCE_SERVER_ID}:")/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/$(jq -r '.app_base_path' <<< "${APP_JSON}")"
         FULL_TARGET_PATH="$([[ "${TARGET_LOCATION}" == "remote" ]] && echo "truenas-${TARGET_SERVER_ID}:")/mnt/${TARGET_POOL}/encrypted-ds/app-ds/$(jq -r '.app_base_path' <<< "${APP_JSON}")"
 
+        # Per-app preconditions skip the app (nothing changed yet), they don't abort the run.
+        # Data from one app version can break another (e.g. a newer Immich DB dump restored into an
+        # older Immich), so the upstream app versions must match; a packaging-only bump may differ.
+        SOURCE_APP_VERSION="$(Execute_command "${SOURCE_LOCATION}" \
+            "midclt call app.query | jq -r '.[] | select(.name==\"${APP_NAME}-${SOURCE_SERVER_ID}\") | .metadata.app_version'")"
+        TARGET_APP_VERSION="$(Execute_command "${TARGET_LOCATION}" \
+            "midclt call app.query | jq -r '.[] | select(.name==\"${APP_NAME}-${TARGET_SERVER_ID}\") | .metadata.app_version'")"
+        if [[ -z "${SOURCE_APP_VERSION}" || -z "${TARGET_APP_VERSION}" ]]; then
+            [[ -z "${SOURCE_APP_VERSION}" ]] \
+                && echo "Replication skipped for app ${APP_NAME}: ${APP_NAME}-${SOURCE_SERVER_ID} is not installed on TrueNAS-${SOURCE_SERVER_ID^}."
+            [[ -z "${TARGET_APP_VERSION}" ]] \
+                && echo "Replication skipped for app ${APP_NAME}: ${APP_NAME}-${TARGET_SERVER_ID} is not installed on TrueNAS-${TARGET_SERVER_ID^} (app_definition_replication can create it)."
+            echo
+            ((SKIPPED++))
+            continue
+        fi
+        if [[ "${SOURCE_APP_VERSION}" != "${TARGET_APP_VERSION}" ]]; then
+            Print_app_version_mismatch "${APP_NAME}" "app version" "${SOURCE_APP_VERSION}" "${TARGET_APP_VERSION}"
+            ((SKIPPED++))
+            continue
+        fi
+
         # Check if local and remote application datasets are available
         Execute_command "${SOURCE_LOCATION}" "test -d \"${FULL_SOURCE_PATH#*:}\"" \
             || Background_error "ERROR: '${FULL_SOURCE_PATH}' does not exist. Is the dataset mounted and unlocked?"
@@ -151,8 +195,12 @@ function Perform_app_replication() {
         if [[ "$(jq -r '.requires_target_running // false' <<< "${APP_JSON}")" == "true" ]]; then
             TARGET_APP_STATE="$(Execute_command "${TARGET_LOCATION}" \
                 "midclt call app.query | jq -r '.[] | select(.name==\"${APP_NAME}-${TARGET_SERVER_ID}\") | .state'")"
-            [[ "${TARGET_APP_STATE}" == "RUNNING" ]] \
-                || Background_error "ERROR: ${APP_NAME}-${TARGET_SERVER_ID} must be RUNNING on the target to replicate (its post-action restores into the running app). Current state: ${TARGET_APP_STATE:-not installed}."
+            if [[ "${TARGET_APP_STATE}" != "RUNNING" ]]; then
+                echo "Replication skipped for app ${APP_NAME}: ${APP_NAME}-${TARGET_SERVER_ID} must be RUNNING on the target (its post-action restores into the running app). Current state: ${TARGET_APP_STATE}."
+                echo
+                ((SKIPPED++))
+                continue
+            fi
         fi
 
         # # Perform pre-action function from the json (for example: Backup Immich Postgres DB)
@@ -187,8 +235,9 @@ function Perform_app_replication() {
         # Perform post-action function from the json (for example: Restore Immich Postgres DB)
         POST_ACTION="$(jq -r '.post_action // empty' <<< "${APP_JSON}")"
         [[ -n "${POST_ACTION}" ]] && "$POST_ACTION"
+        ((SUCCEEDED++))
     done
 
-    echo "### Performing Application Replication completed ###"
+    echo "### Application Replication Summary: ${SUCCEEDED} replicated, ${SKIPPED} skipped ###"
     echo
 }

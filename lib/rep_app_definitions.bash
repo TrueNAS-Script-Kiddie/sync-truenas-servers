@@ -214,6 +214,15 @@ function Apply_app_definition() {
         Wait_for_app_job "${JOBID}" "${TARGET_LOCATION}" "app.create of '${TARGET_FULL_NAME}' (if version ${VERSION} is unavailable on the target, sync catalogs first)"
 
     elif [[ "${TARGET_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
+        # app.update keeps the target's installed version, and the valid values depend on it.
+        local SOURCE_VERSION TARGET_VERSION
+        SOURCE_VERSION="$(jq -r --arg N "${SOURCE_FULL_NAME}" '.[] | select(.name==$N) | .version' <<<"${SOURCE_ALL_APP_JSON}")"
+        TARGET_VERSION="$(jq -r --arg N "${TARGET_FULL_NAME}" '.[] | select(.name==$N) | .version' <<<"${TARGET_ALL_APP_JSON}")"
+        if [[ "${SOURCE_VERSION}" != "${TARGET_VERSION}" ]]; then
+            Print_app_version_mismatch "${APP_NAME}" "catalog version" "${SOURCE_VERSION}" "${TARGET_VERSION}"
+            return 1
+        fi
+
         PAYLOAD="$(jq -nc --argjson values "${VALUES_JSON}" '{values: $values}')"
 
         echo -n "Updating app '${TARGET_FULL_NAME}' (state ${TARGET_STATE}) on truenas-${TARGET_SERVER_ID}...${TEST_MODE:+" (Not done because of '--test' usage!)"}"
