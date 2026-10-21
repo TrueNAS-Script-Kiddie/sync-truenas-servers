@@ -29,6 +29,21 @@ function Control_app() {
     fi
 }
 
+# Stop an app only if it is active — safe as a cleanup undo whatever state an abort left it in.
+# Usage: Stop_app_if_active <FULL_APP_NAME> <LOCATION>
+function Stop_app_if_active() {
+    local FULL_APP_NAME="$1"
+    local LOCATION="$2"
+    local APP_STATE
+
+    APP_STATE="$(Execute_command "${LOCATION}" \
+        "midclt call app.query | jq -r '.[] | select(.name==\"${FULL_APP_NAME}\") | .state'")"
+    if [[ "${APP_STATE}" =~ ^(RUNNING|DEPLOYING|CRASHED)$ ]]; then
+        echo -n "Stopping ${LOCATION} ${FULL_APP_NAME} again, as it was stopped before this run."
+        Control_app "${FULL_APP_NAME}" stop "${LOCATION}"
+    fi
+}
+
 # Explain a source/target app version mismatch and how to fix it in the GUI.
 # Usage: Print_app_version_mismatch <APP_NAME> <WHAT> <SOURCE_VERSION> <TARGET_VERSION>
 function Print_app_version_mismatch() {
@@ -111,6 +126,7 @@ function Perform_app_replication() {
     local TARGET_APP_STATE
     local SOURCE_APP_VERSION
     local TARGET_APP_VERSION
+    local TARGET_STARTED_BY_US
     local SUCCEEDED=0
     local SKIPPED=0
     local APP_NAME
@@ -154,6 +170,7 @@ function Perform_app_replication() {
     for APP_JSON in "${SELECTED_APP_JSON_LIST[@]}"; do
         REMOTE_STOPPED_LIST=()
         LOCAL_STOPPED_LIST=()
+        TARGET_STARTED_BY_US="false"
 
         APP_NAME="$(jq -r '.name' <<< "${APP_JSON}")"
         mapfile -t APP_DIRS_TO_RSYNC_LIST < <(jq -r '.app_dir_list[]' <<< "${APP_JSON}")
@@ -195,8 +212,18 @@ function Perform_app_replication() {
         if [[ "$(jq -r '.requires_target_running // false' <<< "${APP_JSON}")" == "true" ]]; then
             TARGET_APP_STATE="$(Execute_command "${TARGET_LOCATION}" \
                 "midclt call app.query | jq -r '.[] | select(.name==\"${APP_NAME}-${TARGET_SERVER_ID}\") | .state'")"
-            if [[ "${TARGET_APP_STATE}" != "RUNNING" ]]; then
+            if [[ "${TARGET_APP_STATE}" =~ ^(STOPPED|CRASHED)$ && -n "${START_STOPPED_APPS}" ]]; then
+                # Register the undo BEFORE starting, so even a timed-out start still gets stopped again.
+                # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
+                Register_cleanup 'Stop_app_if_active "${APP_NAME}-${TARGET_SERVER_ID}" "${TARGET_LOCATION}"'
+                TARGET_STARTED_BY_US="true"
+                echo -n "Starting ${TARGET_LOCATION} ${APP_NAME}-${TARGET_SERVER_ID} for this run (state ${TARGET_APP_STATE}; --start-stopped-apps)."
+                Control_app "${APP_NAME}-${TARGET_SERVER_ID}" start "${TARGET_LOCATION}"
+                echo
+            elif [[ "${TARGET_APP_STATE}" != "RUNNING" ]]; then
                 echo "Replication skipped for app ${APP_NAME}: ${APP_NAME}-${TARGET_SERVER_ID} must be RUNNING on the target (its post-action restores into the running app). Current state: ${TARGET_APP_STATE}."
+                [[ "${TARGET_APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]] \
+                    && echo "  Pass --start-stopped-apps to start it for the run and stop it again afterwards."
                 echo
                 ((SKIPPED++))
                 continue
@@ -235,6 +262,13 @@ function Perform_app_replication() {
         # Perform post-action function from the json (for example: Restore Immich Postgres DB)
         POST_ACTION="$(jq -r '.post_action // empty' <<< "${APP_JSON}")"
         [[ -n "${POST_ACTION}" ]] && "$POST_ACTION"
+
+        # Return a target that --start-stopped-apps started to its previous (stopped) state
+        if [[ "${TARGET_STARTED_BY_US}" == "true" ]]; then
+            Stop_app_if_active "${APP_NAME}-${TARGET_SERVER_ID}" "${TARGET_LOCATION}"
+            Unregister_cleanup
+            echo
+        fi
         ((SUCCEEDED++))
     done
 
