@@ -7,11 +7,10 @@ implement **one numbered item at a time** with exact locations and snippets.
 
 | Plan | What | Risk |
 |---|---|---|
-| [03 items 5-6](03-makefile-and-hygiene.md) | Add `.gitattributes`; optional README.md (Makefile deleted, SFTP confirmed as the deploy mechanism) | Low |
-| [04](04-simplifications.md) | Behavior-preserving refactors: direction helper, dead code, `--app` validation at parse time | Medium — do after 01 |
+| [04 item 6](04-simplifications.md) | Optional: `midclt call -job` instead of the poll loop in `Control_app` — host-only | Low, optional |
 | [05](05-python-vm-transform.md) | Optional: port the 140-line jq VM-definition transform to Python | Medium, optional |
 | [06](06-app-definition-replication.md) | App-definition replication via `midclt`, config convergence, phased name convergence — closes the real failover gap. **Phase 2 code written offline 2026-07-08** (subtask `app_definition_replication`, manual-only); phases 0–1 still to run on the hosts — see [06-phase0-findings.md](06-phase0-findings.md) for the unverified assumptions to check before the first `--test` run | Medium–High, phased |
-| [08](08-known-operational-issues.md) | "Dataset is busy" ZFS receive failures — root cause still unknown; every external cause ruled out 2026-09-13 (scheduled tasks, SMB, remounts, container namespaces, and a teardown race inside `zfs_autobackup`), diagnostics extended to capture mount namespaces, snapshot holds and the pool's async-destroy backlog | N/A — ongoing investigation |
+| [08](08-known-operational-issues.md) | "Dataset is busy" ZFS receive failures — root cause still unknown; every external cause ruled out 2026-09-13 (scheduled tasks, SMB, remounts, container namespaces, and a teardown race inside `zfs_autobackup`), diagnostics extended to capture mount namespaces, snapshot holds and the pool's async-destroy backlog. Also deferred (item 3): `Backup_immich_DB` dumps without `Wait_for_pg_ready` | N/A — ongoing investigation |
 
 ## Done
 
@@ -19,6 +18,8 @@ implement **one numbered item at a time** with exact locations and snippets.
 |---|---|
 | [01](01-bug-fixes.md) | All 14 bug fixes — lint-verified, confirmed on `--test` and real runs (items 2 & 5 done 2026-07-07; item 8 done via plan 09) |
 | [02](02-safety-and-notifications.md) | Failure email, concurrent-run lock, log/dump retention (retention set to 365 days instead of the plan's 60/30 defaults) — lint-verified 2026-07-07 |
+| [03](03-makefile-and-hygiene.md) | Makefile dropped (SFTP is the deploy mechanism); `.gitattributes` and README.md added |
+| [04](04-simplifications.md) | Behavior-preserving refactors (direction helper, dead code, `--app` validation at parse time) — all but optional item 6 |
 | [07](07-shellcheck-findings.md) | Full-codebase shellcheck triage — every finding fixed, disabled with reasoning, or explicitly deferred |
 | [09](09-stop-running-vms-optarg.md) | Opt-in `--stop-running-vms` (stop/restart VMs on both sides; also folds in plan 01 item 8) — implemented and verified on real runs. Key lesson: stops must be **graceful, never forced** (a forced target stop orphans a libvirt domain and breaks the recreate) |
 
