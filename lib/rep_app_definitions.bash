@@ -99,6 +99,7 @@ function Transform_app_definition() {
     jq --arg SRC "${SOURCE_SERVER_ID}" --arg TGT "${TARGET_SERVER_ID}" \
        --arg SRC_NAME "${APP_NAME}-${SOURCE_SERVER_ID}" --arg TGT_NAME "${APP_NAME}-${TARGET_SERVER_ID}" \
        --slurpfile MAP "${MAP_FILE}" '
+        def regex_escape: gsub("(?<c>[.\\[\\]\\\\^$|?*+(){}])"; "\\\(.c)");
         def rewrite($s):
           reduce (
             [{scope: null, ($SRC): $SRC_NAME, ($TGT): $TGT_NAME}]
@@ -110,7 +111,8 @@ function Transform_app_definition() {
             | ($r[$SRC] | tostring) as $FROM
             | ($r[$TGT] | tostring) as $TO
             | if (($r.scope == null) or ($CUR | contains($r.scope))) and ($CUR | contains($FROM))
-              then ($CUR | split($FROM) | join($TO))
+              # Whole-token only: 192.168.0.10 must not hit 192.168.0.100.
+              then ($CUR | gsub("(?<![A-Za-z0-9])" + ($FROM | regex_escape) + "(?![A-Za-z0-9])"; $TO))
               else $CUR
               end
           );

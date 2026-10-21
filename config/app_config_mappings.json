@@ -2,7 +2,7 @@
   "_doc": [
     "Transform rules for app-definition replication (plan 06 phase 2), applied to the full app.config JSON.",
     "Spec lives in config/app_divergences.md; fill placeholders (null sides) from phase 1 findings.",
-    "string_rewrites: literal substring replace <source value> -> <target value> in every string value; rules apply in order; optional 'scope' substring must also be present in the string.",
+    "string_rewrites: literal replace <source value> -> <target value> in every string value, only where not touching a letter or digit on either side (192.168.0.10 leaves 192.168.0.100 alone); rules apply in order; optional 'scope' substring must also be present in the string.",
     "value_overrides: for any object key matching 'key' whose value equals the source side exactly, set the target side. For non-string per-host values (certificate IDs).",
     "Rules with a null master or backup side are ignored (not yet configured).",
     "The <app>-master <-> <app>-backup name rewrite is NOT configured here: it is the naming convention, built into Transform_app_definition."
