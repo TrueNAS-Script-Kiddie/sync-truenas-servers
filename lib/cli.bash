@@ -29,6 +29,7 @@ function Help() {
     echo "Allowed subtasks:"
     echo -e "all\t\t\t\t\t\t\t\tPerform Application, VM and ZFS Replication / Snapshot Rollup. This is the default."
     echo -e "app_replication\t\t\t\t\t\t\tPerform Application Replication."
+    echo -e "app_definition_replication\t\t\t\t\tReplicate app definitions (midclt app.create/app.update; never deletes; skips a RUNNING target app). Manual-only: not part of 'all' or the default."
     echo -e "vm_replication\t\t\t\t\t\t\tPerform VM replication."
     echo -e "zfs_replication\t\t\t\t\t\t\tPerform ZFS replication (includes snapshot rollup)."
     echo -e "zfs_replication_without_snapshot_rollup\t\t\t\tPerform ZFS replication without snapshot rollup."
@@ -82,6 +83,12 @@ function Process_command_line_options() {
             ;;
         --subtask=app_replication)
             PERFORM_APP_REP="true"
+            ;;
+        --subtask=app_definition_replication)
+            # Deliberately NOT enabled by --subtask=all or the no-subtask default
+            # until it has survived supervised runs in both directions (plan 06).
+            # shellcheck disable=SC2034  # consumed by bin/sync_truenas_servers
+            PERFORM_APP_DEF_REP="true"
             ;;
         --subtask=vm_replication)
             PERFORM_VM_REP="true"
@@ -141,7 +148,8 @@ function Process_command_line_options() {
     [[ -z "${TASK}" ]] && Help 1
 
     # When no subtask is specified, then all subtasks are enabled by default
-    if [[ -z "${PERFORM_ROLLUP}" && -z "${PERFORM_APP_REP}" && -z "${PERFORM_VM_REP}" && -z "${PERFORM_ZFS_REP_ALL}" && -z "${PERFORM_ZFS_REP_LATEST}" ]]; then
+    # (app_definition_replication stays opt-in — see plan 06 guardrails)
+    if [[ -z "${PERFORM_ROLLUP}" && -z "${PERFORM_APP_REP}" && -z "${PERFORM_APP_DEF_REP}" && -z "${PERFORM_VM_REP}" && -z "${PERFORM_ZFS_REP_ALL}" && -z "${PERFORM_ZFS_REP_LATEST}" ]]; then
         PERFORM_ROLLUP="true"
         PERFORM_APP_REP="true"
         PERFORM_VM_REP="true"
@@ -155,9 +163,9 @@ function Process_command_line_options() {
         exit 1
     fi
     
-    # --app is only allowed if $PERFORM_APP_REP=true
-    if [[ "${#APP_LIST[@]}" -gt 0 && -z "${PERFORM_APP_REP}" ]]; then
-        echo "ERROR: --app can only be used when the app_replication subtask is enabled."
+    # --app is only allowed if $PERFORM_APP_REP=true or $PERFORM_APP_DEF_REP=true
+    if [[ "${#APP_LIST[@]}" -gt 0 && -z "${PERFORM_APP_REP}" && -z "${PERFORM_APP_DEF_REP}" ]]; then
+        echo "ERROR: --app can only be used when the app_replication or app_definition_replication subtask is enabled."
         exit 1
     fi
 

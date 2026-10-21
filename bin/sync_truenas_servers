@@ -42,6 +42,7 @@ REMOTE_CMD=( ssh -F "${SSH_CONFIG_FILE}" "truenas-${REMOTE_SERVER_ID}" )
 declare TASK
 declare PERFORM_ROLLUP
 declare PERFORM_APP_REP
+declare PERFORM_APP_DEF_REP
 declare PERFORM_VM_REP
 declare PERFORM_ZFS_REP_ALL
 declare PERFORM_ZFS_REP_LATEST
@@ -86,6 +87,8 @@ source "${SCRIPT_DIR}/../lib/rep_filesystems.bash"
 source "${SCRIPT_DIR}/../lib/snap_rollup.bash"
 # shellcheck source=lib/rep_vms.bash
 source "${SCRIPT_DIR}/../lib/rep_vms.bash"
+# shellcheck source=lib/rep_app_definitions.bash
+source "${SCRIPT_DIR}/../lib/rep_app_definitions.bash"
 
 # Safety net: any exit that bypasses Background_error still runs the registered
 # cleanups and kills the tail (see CLEANUP_COMMAND_STACK / Kill_tail in
@@ -114,6 +117,7 @@ if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
     echo "######################################################################"
     echo
 
+    [[ -n "${PERFORM_APP_DEF_REP}" ]]    && Perform_app_definition_replication
     [[ -n "${PERFORM_APP_REP}" ]]        && Perform_app_replication
     [[ -n "${PERFORM_VM_REP}" ]]         && Perform_vm_replication
     [[ -n "${PERFORM_ZFS_REP_ALL}" ]]    && Perform_filesystem_replication all_snapshots

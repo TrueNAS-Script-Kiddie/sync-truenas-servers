@@ -1,5 +1,11 @@
 # Plan 06 — App-definition replication & config convergence
 
+> **Status 2026-07-08:** phase 2 implemented offline (no host access):
+> `lib/rep_app_definitions.bash`, `config/app_config_mappings.json`, CLI wiring.
+> Phases 0–1 NOT run — [06-phase0-findings.md](06-phase0-findings.md) lists every
+> assumed midclt shape (code markers: `VERIFY(phase0)`); verify those on-host and
+> fill `config/app_divergences.md` before trusting a real run. Phase 3 not started.
+
 **Goal:** close the real gap in demand 1 (fast failover). Today
 `app_replication` syncs *data* into an app that must already be installed on
 the target; the app **definition** is the one manual, error-prone step left.
