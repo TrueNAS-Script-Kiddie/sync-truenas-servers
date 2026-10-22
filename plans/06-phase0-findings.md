@@ -64,7 +64,11 @@ catalog reports its own installed version as latest:
 | plex | 1.3.19 | 1.3.19 |
 
 An `app.create` on a host whose catalog lacks the source's version fails with
-the "sync catalogs" error; `app.update` is unaffected (item 3).
+the "sync catalogs" error. Because `app.update` keeps the target's version
+(item 3), the code skips an update when the catalog versions differ, and
+`app_replication` skips an app whose upstream app versions differ — both with
+a GUI fix hint (`Print_app_version_mismatch`). The Immich mismatch above has
+since been converged.
 
 ## 5. Same `app.config` on `truenas-backup` — ✅ captured
 
@@ -76,5 +80,6 @@ Master-vs-backup diff classified in `config/app_divergences.md`.
   compose-config payload shape is unverified.
 - App create/update job wait: `core.get_jobs` polling, 600 s timeout.
 - Post-apply check: target `app.config` (server keys stripped) is diffed
-  against the transformed JSON; differences only WARN.
+  against the transformed JSON; differences only WARN. ✅ On the it-tools
+  create and update (2026-10-22) it reported no difference: values round-trip.
 - ✅ The jq transform (`walk()`, lookaround regex) runs on the hosts' jq 1.6.

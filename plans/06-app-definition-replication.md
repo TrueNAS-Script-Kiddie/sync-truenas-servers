@@ -1,6 +1,6 @@
 # Plan 06 — App-definition replication & config convergence
 
-> **Status 2026-10-21:** phase 0 done — payload shapes confirmed
+> **Status 2026-10-22:** phase 0 done 2026-10-21 — payload shapes confirmed
 > ([06-phase0-findings.md](06-phase0-findings.md)). Phase 1 done 2026-10-22:
 > bucket (b) converged on both hosts (`config/app_divergences.md`).
 > Phase 2 run for real 2026-10-22 on a throwaway app (it-tools): `app.create`
@@ -49,6 +49,10 @@ the two in `apps.json` today. Each row stays until it works.
 - **Never transform or copy external-identity values** (Plex claim/GUID
   territory, anything registering with a third-party service). These stay
   per-instance, exactly like `app_dir_list` already protects their files.
+  ⚠️ Open: the pipeline currently copies Plex's `claim_token` with the rest of
+  the values. Harmless today — Plex ignores it once a server is linked, and
+  the link itself lives in the never-synced `Preferences.xml` — but it breaks
+  this rule. Needs a keep-the-target's-value rule in `app_config_mappings.json`.
 - New subtask is **manual-only** at first: not part of `--subtask=all` until
   it has survived several supervised runs in both directions.
 
@@ -113,6 +117,15 @@ unsure.**
 
 ## Phase 2 — `app_definition_replication` subtask (medium)
 
+**Built** — [lib/rep_app_definitions.bash](../lib/rep_app_definitions.bash).
+Where it differs from the design below: the mapping file uses
+`string_rewrites` (whole-token literal replace, optional `scope`) and
+`value_overrides` (per-key exact-value swap) instead of the VM rule shape;
+server-managed keys (`ix_*`, `release_name`) are stripped on extract; an
+update is skipped when the catalog versions differ (`app.update` keeps the
+target's version); shown diffs mask secret-looking values; `--app` works for
+any `apps.json` entry, including a name-only (definitions-only) one.
+
 Mirror the VM architecture — same file layout, same naming, same TEST_MODE
 discipline:
 
@@ -144,8 +157,8 @@ discipline:
 3. **CLI wiring** ([lib/cli.bash](../lib/cli.bash)): new
    `--subtask=app_definition_replication` setting a new `PERFORM_APP_DEF_REP`
    flag; honor `--app=` filtering; **do not add it to `--subtask=all` or the
-   no-subtask default**. Dispatch from
-   [bin/sync_truenas_servers:86-90](../bin/sync_truenas_servers#L86-L90)
+   no-subtask default**. Dispatch from the subtask list in
+   [bin/sync_truenas_servers](../bin/sync_truenas_servers)
    *before* `Perform_app_replication` (definition before data). Source the new
    lib file with the others.
 4. **Docs**: add the subtask to `Help`, `CLAUDE.md`/`AGENTS.md`.
@@ -165,7 +178,9 @@ the phase-2 pipeline, which makes each migration double as a failover drill:
 1. Add a per-app transition flag to `apps.json`, e.g.
    `"per_server_name_suffix": true` (default true). Code composes
    `FULL_APP_NAME` with the suffix only when the flag is true
-   ([lib/rep_apps.bash:44](../lib/rep_apps.bash#L44)), and the docker grep
+   (`Control_app_with_checks` and the other `${APP_NAME}-${…SERVER_ID}` sites in
+   [lib/rep_apps.bash](../lib/rep_apps.bash) and
+   [lib/rep_app_definitions.bash](../lib/rep_app_definitions.bash)), and the docker grep
    patterns in [lib/immich_db.bash](../lib/immich_db.bash) similarly. This
    lets apps migrate **one at a time** with the tool working throughout.
 2. Per app, on **backup** first: verify replicated data is current → delete

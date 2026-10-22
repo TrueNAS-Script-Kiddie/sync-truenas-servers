@@ -73,7 +73,8 @@ Important nuances, not just "go rename them":
   failover drill. See plan 06 phase 3, which adds a per-app
   `per_server_name_suffix` transition flag so apps migrate one at a time.
 - The suffix interpolation lives in **code**, not `apps.json`
-  (`lib/rep_apps.bash:44`, the docker greps in `lib/immich_db.bash`) — the
+  (`Control_app_with_checks` in `lib/rep_apps.bash`, `lib/rep_app_definitions.bash`, the
+  docker greps in `lib/immich_db.bash`) — the
   code saved by dropping it is real but modest (~10–15 lines), so this isn't
   primarily a code-cleanup motivation.
 - **Port convergence is required independent of naming.** Identical ports on

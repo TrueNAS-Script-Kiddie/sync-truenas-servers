@@ -14,14 +14,16 @@ One entry script dispatches four replication subtasks:
 
 | Subtask | What it does |
 |---|---|
-| `app_replication` | Stops the app on **both** hosts, `rsync`s the directories listed in [config/apps.json](config/apps.json), starts it again. An app may declare a `pre_action`/`post_action` hook — Immich uses them to dump its Postgres DB before and restore it after. |
+| `app_replication` | Stops the app on **both** hosts, `rsync`s the directories listed in [config/apps.json](config/apps.json), starts it again. An app may declare a `pre_action`/`post_action` hook — Immich uses them to dump its Postgres DB before and restore it after. An app is **skipped** (the run carries on) when it isn't installed on both hosts, when the upstream app versions differ, or when Immich's target isn't running (`--start-stopped-apps` starts it for the run). |
 | `vm_replication` | Reads the source VM definition via `midclt`, rewrites per-host paths, NIC and display ports using [config/vm_device_mappings.json](config/vm_device_mappings.json), replicates the zvols, then recreates the VM on the target. |
 | `zfs_replication` | Drives `zfs_autobackup` over every dataset carrying the `autobackup:<task>_<scope>` ZFS property. Datasets opt in by setting that property in TrueNAS, not by being listed in config. |
 | `snapshot_rollup` | Thins snapshots on the target with `zfs-rollup`. |
 
 A fifth subtask, `app_definition_replication`, replicates app *definitions* (`midclt app.create` /
-`app.update`, never `app.delete`). It is **manual-only and not yet verified on a live host** —
-see [plans/06-phase0-findings.md](plans/06-phase0-findings.md) before using it.
+`app.update`, never `app.delete`): it creates a missing target app, updates a stopped one with
+the same catalog version, and leaves a running one alone. It is **manual-only**; create and
+update are proven on a throwaway app, not yet on Plex/Immich — see
+[plans/06](plans/06-app-definition-replication.md).
 
 `--subtask=all`, which is also the default when no subtask is given, runs the four subtasks
 above and deliberately excludes `app_definition_replication`.
@@ -74,6 +76,9 @@ Then the real thing:
 # One subtask, one app
 ./bin/sync_truenas_servers --task=master_to_backup --subtask=app_replication --app=immich
 
+# Full app sync: definitions first, then data (stop the target apps first; Immich ends stopped)
+./bin/sync_truenas_servers --task=master_to_backup --subtask=app_definition_replication --subtask=app_replication --start-stopped-apps
+
 # Two VMs, backup -> master, stopping them first if they happen to be running
 ./bin/sync_truenas_servers --task=backup_to_master --subtask=vm_replication --vm=VM1 --vm=VM2 --stop-running-vms
 
@@ -91,6 +96,8 @@ Worth knowing before the first run:
   Not `nohup`: a child of a `sudo su` shell stays under sudo's `log_subcmds` tracer, and once
   sudo loses track of it every exec fails with `ENOSYS`. It **always exits 0** — success or failure is
   reported by email and in `logs/`, never by the exit code, so don't chain `&&` off a run.
+- **`app_definition_replication` never stops or starts an existing app**; an app it creates
+  starts like any new install.
 - **A running VM is skipped by default.** `--stop-running-vms` opts into stopping it (always
   gracefully) and starting it again afterwards.
 - **Concurrent runs are refused**: a lock in `logs/` blocks a second run on the same host, and
@@ -144,8 +151,10 @@ In daily production use for app, VM and ZFS replication. Three things a reader s
 - **VM UUID collision** on the target's delete→recreate step under `--stop-running-vms`: the
   transform copies the source VM's UUID verbatim, which can collide with a not-yet-undefined
   libvirt domain. Recovery steps in [plans/09](plans/09-stop-running-vms-optarg.md).
-- **`app_definition_replication` is unverified.** Its `midclt` payload shapes were written
-  offline and never checked against a live host — always `--test` first.
+- **`app_definition_replication` is young.** Payload shapes are verified on both hosts and
+  create/update ran for real on a throwaway app; only Plex and Immich are configured so far
+  (every app on master is the goal, see [plans/06](plans/06-app-definition-replication.md)).
+  Always `--test` first.
 
 There is no test suite; validation is by `bash -n`, `shellcheck -x` and `--test` runs against
 the real servers.

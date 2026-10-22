@@ -39,7 +39,7 @@ Certificate ids: `midclt call certificate.query | jq '.[] | {id, name}'` on each
 | `plex.allowed_networks` | b | `192.168.0.0/16` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | ✅ **empty** on both (TrueNAS field and Plex Web): it becomes Plex's `allowedNetworks` — clients from these IPs need no sign-in and are treated as the server owner (all libraries, server settings) — not bandwidth "LAN Networks", whatever the TrueNAS field help says. The image applies it only when the container is created and skips an empty value, so also clear it in Plex Web (Settings → Network → "List of IP addresses and networks that are allowed without auth") |
 | `resources.limits.cpus` | b | `4` | `2` | ✅ `4` on both (same 12-thread CPU; a cap, not a reservation) |
 | `storage.transcode` | b | `type: temporary` | `type: tmpfs`, `tmpfs_config.size: 2048` | ✅ `temporary` on both (catalog default): can't fill up mid-stream, uses no RAM, SSD wear negligible |
-| `plex.claim_token` | — | _(redacted)_ | _(redacted)_ | none: used only to link an unlinked server to plex.tv, ignored once linked (the link lives in `Preferences.xml`, never synced) |
+| `plex.claim_token` | — | _(redacted)_ | _(redacted)_ | none on the hosts: used only to link an unlinked server to plex.tv, ignored once linked (the link lives in `Preferences.xml`, never synced). ⚠️ Open: the pipeline still copies it — should keep the target's value (plan 06 guardrails) |
 | `storage.config`, `storage.logs` host paths | c | `ssdmaster-pool/…/app-ds/plex-ds` | `backup-pool/…/app-ds/plex-ds` | in `string_rewrites` |
 | `storage.data.host_path_config.acl.path` | c | `master-pool/encrypted-ds/media-ds` | `backup-pool/encrypted-ds/media-ds` | in `string_rewrites` |
 

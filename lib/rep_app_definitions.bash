@@ -6,6 +6,7 @@
 #   - NEVER calls app.delete.
 #   - A RUNNING (or otherwise non-STOPPED/CRASHED) target app is skipped with a loud
 #     warning — it may be a test-in-progress and must never be clobbered.
+#   - An update is skipped when the catalog versions differ (app.update keeps the target's version).
 #   - Manual-only subtask: not part of --subtask=all or the no-subtask default.
 #
 # midclt app.* payload shapes verified on Goldeye: plans/06-phase0-findings.md.

@@ -34,7 +34,7 @@ function Help() {
     echo "Allowed subtasks:"
     echo -e "all\t\t\t\t\t\t\t\tPerform Application, VM and ZFS Replication / Snapshot Rollup. This is the default."
     echo -e "app_replication\t\t\t\t\t\t\tPerform Application Replication."
-    echo -e "app_definition_replication\t\t\t\t\tReplicate app definitions (midclt app.create/app.update; never deletes; skips a RUNNING target app). Manual-only: not part of 'all' or the default."
+    echo -e "app_definition_replication\t\t\t\t\tReplicate app definitions (midclt app.create/app.update; never deletes; skips a RUNNING target app and an update across catalog versions). Manual-only: not part of 'all' or the default."
     echo -e "vm_replication\t\t\t\t\t\t\tPerform VM replication."
     echo -e "zfs_replication\t\t\t\t\t\t\tPerform ZFS replication (includes snapshot rollup)."
     echo -e "zfs_replication_without_snapshot_rollup\t\t\t\tPerform ZFS replication without snapshot rollup."
@@ -45,7 +45,7 @@ function Help() {
     echo
     echo "Allowed apps:"
     jq -r '.apps[].name' "${SCRIPT_DIR}/../config/apps.json" \
-        | while read -r APP; do echo -e "${APP}\t\t\t\t\t\t\t\tLimit the Application Replication subtask to only copy ${APP^}."; done
+        | while read -r APP; do echo -e "${APP}\t\t\t\t\t\t\t\tLimit app_replication / app_definition_replication to ${APP^}."; done
     echo
 
     exit "${1:-0}"
