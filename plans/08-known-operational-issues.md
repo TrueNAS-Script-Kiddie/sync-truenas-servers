@@ -9,29 +9,114 @@ aren't mistaken for regressions.
 
 ## 1. Immich Postgres collation-version-mismatch warning
 
-**Symptom:** every `Backup_immich_DB` run prints a Postgres `WARNING` about a
-collation version mismatch (the OS-provided collation library drifted
-version since the databases were created — typically a base-image/package
-update).
+**Status:** clean on both hosts (2026-10-22). Recurs after every Postgres
+*major* upgrade of the Immich app — follow the procedure below.
 
-**Impact: none.** It's a `WARNING`, not an error — `pg_dumpall` still exits
-`0`, so `Backup_immich_DB` proceeds normally (confirmed directly by a real
-run: the warnings printed and the backup completed successfully right after).
-Plan 01 item 2d's `|| Background_error` conversion does not and should not
-trigger on this.
+**Symptom:** `Backup_immich_DB` prints, once per database it connects to:
 
-**Fixing it is out of scope for this project** — Immich/Postgres
-administration, not something `sync_truenas_servers` should automate. If you
-ever do: Postgres's own hint is `ALTER DATABASE ... REFRESH COLLATION
-VERSION`, but **don't run that blindly** — per Postgres's own docs, a
-mismatch can mean indexes on collation-sensitive columns are silently using
-a different sort order than when they were built. Safe order: identify
-affected indexes/objects, `REINDEX` them, *then* `REFRESH COLLATION VERSION`
-— not the other way round. Whether this is worth doing for Immich's specific
-schema is a separate decision from this codebase.
+```
+WARNING:  database "postgres" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+```
 
-**Action: none.** Documented so a future `pg_dumpall` run showing these
-lines isn't mistaken for something today's fixes broke.
+It's a `WARNING`: `pg_dumpall` still exits `0` and the backup completes.
+Plan 01 item 2d's `|| Background_error` does not and should not trigger on it.
+
+### Cause
+
+Postgres records, per database, the glibc version it was created under
+(`pg_database.datcollversion`), because glibc defines text sort order. When
+the running glibc differs, it warns: indexes on text columns built under the
+old sort order may now be silently wrong.
+
+The Immich app contains two containers that run the **same** data files
+(`immich-pgdata-ds`) on **different** Debian releases:
+
+| Container | Image | Debian / glibc | Runs |
+|---|---|---|---|
+| `ix-immich-<server>-pgvecto-1` | `ghcr.io/immich-app/postgres:18-vectorchord1.1.1` (Immich) | 12 / **2.36** (`PG_VERSION=…pgdg12…`) | all the time — the Postgres server |
+| `ix-immich-<server>-pgvecto_upgrade-1` | `ghcr.io/truenas/containers/postgres-upgrade:1.2.24` (TrueNAS) | 13 / **2.41** (`PG_VERSION=…pgdg13…`) | at each app start; only acts on a Postgres major upgrade |
+
+On a major upgrade the TrueNAS helper `initdb`s the new cluster and
+`pg_upgrade`s into it under 2.41, then `REFRESH`es every database to 2.41.
+From then on `pgvecto` runs everything under 2.36 → mismatch. TrueNAS treats
+this as expected ([truenas/apps#3882](https://github.com/truenas/apps/issues/3882):
+the helper is shared by all apps, most of which run on trixie).
+
+**Which host:** only the warning on the sync's *source* is ever seen — only
+`pg_dumpall` connects there. A *target* never keeps it: `Restore_immich_DB`
+wipes pgdata, `pgvecto` re-`initdb`s under its own glibc, and the dump's
+`CREATE DATABASE immich` runs under that same glibc. So the host that is
+normally the source (master) keeps the helper's 2.41 labels; the other host
+is clean after its next restore.
+
+`postgres` and `template1` are Postgres's built-in, normally empty databases
+(`template0` refuses connections and carries no version). `immich` holds the
+data; it is usually unaffected because each restore recreates it.
+
+### Procedure — when the warning appears
+
+Root shell on the host that prints it (and, to be sure, on the other host).
+All three steps read only; step 3 needs the app running.
+
+1. Show recorded vs. running version per database:
+
+```bash
+h=$(hostname -s | sed 's/^truenas-//')
+c=$(docker ps --format '{{.Names}}' | grep -E "immich-$h-pgvecto-[0-9]+$"); echo "pgvecto container: $c"
+docker exec -i "$c" psql -U immich -d immich -c "SELECT datname, datcollversion AS created_with, pg_database_collation_actual_version(oid) AS running_on FROM pg_database;"
+```
+
+2. Every row where `created_with` ≠ `running_on` is affected. For each
+   affected database other than `immich`, confirm it holds no user objects
+   (expected `0`; replace `postgres template1` with the affected names):
+
+```bash
+for db in postgres template1; do echo -n "$db: "; docker exec -i "$c" psql -U immich -d "$db" -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%';"; done
+```
+
+3. Fix, per affected database:
+
+   - **Empty database (`0` in step 2)** — only the label is wrong: system
+     catalogs don't sort via glibc, so there is nothing to rebuild.
+     Refreshing the label *is* the complete fix, not a suppression:
+
+```bash
+docker exec -i "$c" psql -U immich -d postgres -c "ALTER DATABASE postgres REFRESH COLLATION VERSION;"
+docker exec -i "$c" psql -U immich -d template1 -c "ALTER DATABASE template1 REFRESH COLLATION VERSION;"
+```
+
+   - **`immich`, or any database with a non-zero count** — refreshing alone
+     *would* only hide it: indexes built under the other sort order stay
+     wrong. Rebuild first, then refresh. Stop Immich's writers so nothing
+     writes during the `REINDEX` (minutes on a large library):
+
+```bash
+docker stop "ix-immich-$h-server-1" "ix-immich-$h-machine-learning-1"
+docker exec -i "$c" psql -U immich -d immich -c "REINDEX DATABASE immich;"
+docker exec -i "$c" psql -U immich -d immich -c "ALTER DATABASE immich REFRESH COLLATION VERSION;"
+docker start "ix-immich-$h-machine-learning-1" "ix-immich-$h-server-1"
+```
+
+   Verify by re-running step 1: every row except `template0` must show equal
+   versions. Each `ALTER` prints the warning once more as it connects, then
+   `NOTICE: changing version from X to Y` — that's expected.
+
+Alternative for a host that is a sync *target*: the next `app_replication`
+run onto it wipes and re-creates its cluster under its own glibc, clearing
+the mismatch without any manual step.
+
+### When it becomes risky
+
+When Immich moves its Postgres image to Debian 13 (glibc 2.41), the mismatch
+flips direction and hits **every** database on both hosts — including
+`immich`, which then needs the `REINDEX` path above. Check step 1 after any
+Immich app update that changes the `pgvecto` image's `PG_VERSION` suffix
+(`pgdg12` → `pgdg13`).
+
+Not automated in this project on purpose: `REINDEX` of a live Immich DB is a
+judgement call, and a silent auto-refresh is exactly the "hide it" outcome
+above.
 
 ---
 
