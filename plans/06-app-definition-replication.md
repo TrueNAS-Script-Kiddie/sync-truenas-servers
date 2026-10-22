@@ -49,10 +49,7 @@ the two in `apps.json` today. Each row stays until it works.
 - **Never transform or copy external-identity values** (Plex claim/GUID
   territory, anything registering with a third-party service). These stay
   per-instance, exactly like `app_dir_list` already protects their files.
-  ⚠️ Open: the pipeline currently copies Plex's `claim_token` with the rest of
-  the values. Harmless today — Plex ignores it once a server is linked, and
-  the link itself lives in the never-synced `Preferences.xml` — but it breaks
-  this rule. Needs a keep-the-target's-value rule in `app_config_mappings.json`.
+  Enforced by `keep_target` in `app_config_mappings.json` (Plex `claim_token`).
 - New subtask is **manual-only** at first: not part of `--subtask=all` until
   it has survived several supervised runs in both directions.
 
@@ -119,8 +116,9 @@ unsure.**
 
 **Built** — [lib/rep_app_definitions.bash](../lib/rep_app_definitions.bash).
 Where it differs from the design below: the mapping file uses
-`string_rewrites` (whole-token literal replace, optional `scope`) and
-`value_overrides` (per-key exact-value swap) instead of the VM rule shape;
+`string_rewrites` (whole-token literal replace, optional `scope`),
+`value_overrides` (per-key exact-value swap) and `keep_target` (per-path,
+target keeps its own value) instead of the VM rule shape;
 server-managed keys (`ix_*`, `release_name`) are stripped on extract; an
 update is skipped when the catalog versions differ (`app.update` keeps the
 target's version); shown diffs mask secret-looking values; `--app` works for

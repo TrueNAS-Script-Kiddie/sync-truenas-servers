@@ -112,16 +112,19 @@ function Show_app_config_diff() {
 function Transform_app_definition() {
     local APP_NAME="$1"
     local MAP_FILE="${SCRIPT_DIR}/../config/app_config_mappings.json"
+    local TARGET_APP_JSON_FILE="${APP_DEF_TMP_DIR}/json/per_app/${APP_NAME}.truenas-${TARGET_SERVER_ID}.target.json"
 
     echo "Transforming source app config into destination app config..."
 
     [[ -f "${MAP_FILE}" ]] || Background_error "ERROR: mapping file not found: ${MAP_FILE}"
+    # Target not installed (create): keep_target falls back to each rule's default
+    [[ -f "${TARGET_APP_JSON_FILE}" ]] || TARGET_APP_JSON_FILE=/dev/null
 
     # The <app>-master <-> <app>-backup rewrite is the naming convention (see
     # Control_app_with_checks), so it is prepended here rather than configured.
     jq --arg SRC "${SOURCE_SERVER_ID}" --arg TGT "${TARGET_SERVER_ID}" \
        --arg SRC_NAME "${APP_NAME}-${SOURCE_SERVER_ID}" --arg TGT_NAME "${APP_NAME}-${TARGET_SERVER_ID}" \
-       --slurpfile MAP "${MAP_FILE}" '
+       --slurpfile MAP "${MAP_FILE}" --slurpfile TGT_CFG "${TARGET_APP_JSON_FILE}" '
         def regex_escape: gsub("(?<c>[.\\[\\]\\\\^$|?*+(){}])"; "\\\(.c)");
         def rewrite($s):
           reduce (
@@ -147,6 +150,12 @@ function Transform_app_definition() {
           else .
           end
         )
+        # Per-instance values: the source never decides them. Only paths the source has.
+        | reduce ($MAP[0].keep_target.rules // [])[] as $r (.;
+            if (try getpath($r.path) catch null) == null then .
+            else (try ($TGT_CFG[0] | getpath($r.path)) catch null) as $KEEP
+              | setpath($r.path; if $KEEP == null then $r.default else $KEEP end)
+            end)
     ' "${SOURCE_APP_JSON_FILE}" > "${TRANSFORMED_APP_JSON_FILE}" \
         || Background_error "ERROR transforming ${SOURCE_APP_JSON_FILE}"
 

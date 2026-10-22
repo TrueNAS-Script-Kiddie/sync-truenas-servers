@@ -34,8 +34,8 @@ every create/update, so `Extract_app_definitions` strips them
 round-trips.
 
 Secrets in values: Immich `immich.db_password`, `immich.redis_password`; Plex
-`plex.claim_token`. They replicate like any other value — see
-`config/app_divergences.md` for the Plex claim-token caveat.
+`plex.claim_token`. The Immich ones replicate like any other value; the Plex
+claim token never does (`keep_target`, see `config/app_divergences.md`).
 
 ## 3. `app.create` / `app.update` signatures — ✅ as assumed
 

@@ -4,23 +4,24 @@
     "Spec lives in config/app_divergences.md; fill placeholders (null sides) from phase 1 findings.",
     "string_rewrites: literal replace <source value> -> <target value> in every string value, only where not touching a letter or digit on either side (192.168.0.10 leaves 192.168.0.100 alone); rules apply in order; optional 'scope' substring must also be present in the string.",
     "value_overrides: for any object key matching 'key' whose value equals the source side exactly, set the target side. For non-string per-host values (certificate IDs).",
+    "keep_target: the value at 'path' is never taken from the source; the target keeps its own, or gets 'default' when it has none (app not installed yet). For per-instance identity (Plex claim token). Applied last.",
     "Rules with a null master or backup side are ignored (not yet configured).",
     "The <app>-master <-> <app>-backup name rewrite is NOT configured here: it is the naming convention, built into Transform_app_definition."
   ],
   "string_rewrites": {
     "rules": [
       {
-        "scope": "/encrypted-ds/app-ds",
+        "scope": null,
         "master": "/mnt/ssdmaster-pool/encrypted-ds/app-ds",
         "backup": "/mnt/backup-pool/encrypted-ds/app-ds"
       },
       {
-        "scope": "/encrypted-ds/vm-ds",
+        "scope": null,
         "master": "/mnt/ssdmaster-pool/encrypted-ds/vm-ds",
         "backup": "/mnt/backup-pool/encrypted-ds/vm-ds"
       },
       {
-        "scope": "/encrypted-ds",
+        "scope": null,
         "master": "/mnt/master-pool/encrypted-ds",
         "backup": "/mnt/backup-pool/encrypted-ds"
       },
@@ -42,6 +43,14 @@
         "key": "certificate_id",
         "master": null,
         "backup": null
+      }
+    ]
+  },
+  "keep_target": {
+    "rules": [
+      {
+        "path": ["plex", "claim_token"],
+        "default": ""
       }
     ]
   }
