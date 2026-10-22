@@ -13,6 +13,8 @@
 # Workspace
 APP_DEF_TMP_DIR="${SCRIPT_DIR}/../tmp/apps"
 mkdir -p "${APP_DEF_TMP_DIR}/json/per_app"
+# The extracted configs hold app secrets (DB passwords, tokens): root only
+chmod 700 "${APP_DEF_TMP_DIR}" "${APP_DEF_TMP_DIR}/json" "${APP_DEF_TMP_DIR}/json/per_app"
 
 # app.config keys the middleware regenerates on every create/update — never part of the payload
 APP_DEF_SERVER_KEYS='del(.ix_context, .ix_certificates, .ix_certificate_authorities, .ix_volumes, .release_name)'
@@ -78,6 +80,26 @@ function Extract_app_definitions() {
     echo
 }
 
+# Print an indented diff of two app-config JSON files with secret-looking values masked
+# (logs are emailed): equal secrets show as REDACTED, differing ones as REDACTED (before/after).
+# Usage: Show_app_config_diff <BEFORE_JSON_FILE> <AFTER_JSON_FILE>
+function Show_app_config_diff() {
+    local BEFORE_FILE="$1"
+    local AFTER_FILE="$2"
+    # shellcheck disable=SC2016  # jq program: $-variables are jq's, not bash's
+    local MASK_PROGRAM='
+        ($A[0]) as $a | ($B[0]) as $b
+        | (if $SIDE == "before" then $a else $b end) as $doc
+        | reduce ($doc | paths(scalars)) as $p ($doc;
+            if ($p[-1] | type) == "string" and ($p[-1] | test("pass|secret|token|key"; "i")) and (getpath($p) | type) == "string"
+            then setpath($p; if ($a | getpath($p)) == ($b | getpath($p)) then "REDACTED" else "REDACTED (\($SIDE))" end)
+            else . end)'
+
+    diff <(jq -S -n --arg SIDE before --slurpfile A "${BEFORE_FILE}" --slurpfile B "${AFTER_FILE}" "${MASK_PROGRAM}") \
+         <(jq -S -n --arg SIDE after  --slurpfile A "${BEFORE_FILE}" --slurpfile B "${AFTER_FILE}" "${MASK_PROGRAM}") \
+        | sed 's/^/    /'
+}
+
 ###############################
 # Tasks per app individually  #
 ###############################
@@ -132,7 +154,7 @@ function Transform_app_definition() {
 
     echo "  truenas-${LOCAL_SERVER_ID} - Transformed source json into ${TRANSFORMED_APP_JSON_FILE}"
     echo "  Source → target rewrites:"
-    diff <(jq -S . "${SOURCE_APP_JSON_FILE}") <(jq -S . "${TRANSFORMED_APP_JSON_FILE}") | sed 's/^/    /'
+    Show_app_config_diff "${SOURCE_APP_JSON_FILE}" "${TRANSFORMED_APP_JSON_FILE}"
     echo
 }
 
@@ -174,7 +196,7 @@ function Apply_app_definition() {
     local SOURCE_FULL_NAME="${APP_NAME}-${SOURCE_SERVER_ID}"
     local TARGET_FULL_NAME="${APP_NAME}-${TARGET_SERVER_ID}"
     local TARGET_APP_JSON_FILE="${APP_DEF_TMP_DIR}/json/per_app/${APP_NAME}.truenas-${TARGET_SERVER_ID}.target.json"
-    local TARGET_STATE VALUES_JSON PAYLOAD QUOTED_PAYLOAD JOBID POST_CONFIG
+    local TARGET_STATE VALUES_JSON PAYLOAD QUOTED_PAYLOAD JOBID POST_CONFIG_FILE
 
     TARGET_STATE="$(jq -r --arg N "${TARGET_FULL_NAME}" '.[] | select(.name==$N) | .state' <<<"${TARGET_ALL_APP_JSON}")"
     VALUES_JSON="$(jq -c . "${TRANSFORMED_APP_JSON_FILE}")"
@@ -182,7 +204,7 @@ function Apply_app_definition() {
     # Show what an update would change on the target (also under --test / when skipping)
     if [[ -f "${TARGET_APP_JSON_FILE}" ]]; then
         echo "Target config changes that would be pushed:"
-        diff <(jq -S . "${TARGET_APP_JSON_FILE}") <(jq -S . "${TRANSFORMED_APP_JSON_FILE}") | sed 's/^/    /'
+        Show_app_config_diff "${TARGET_APP_JSON_FILE}" "${TRANSFORMED_APP_JSON_FILE}"
         echo
     fi
 
@@ -245,10 +267,11 @@ function Apply_app_definition() {
 
     # Post-apply check: differences only WARN — server-added defaults are expected
     # noise on the first runs (see plans/06-phase0-findings.md).
-    POST_CONFIG="$(Execute_command "${TARGET_LOCATION}" "midclt call app.config \"${TARGET_FULL_NAME}\"" 2>/dev/null | jq "${APP_DEF_SERVER_KEYS}")"
-    if ! diff <(jq -S . <<<"${POST_CONFIG}") <(jq -S . "${TRANSFORMED_APP_JSON_FILE}") >/dev/null 2>&1; then
+    POST_CONFIG_FILE="${APP_DEF_TMP_DIR}/json/per_app/${APP_NAME}.truenas-${TARGET_SERVER_ID}.post_apply.json"
+    Execute_command "${TARGET_LOCATION}" "midclt call app.config \"${TARGET_FULL_NAME}\"" 2>/dev/null | jq "${APP_DEF_SERVER_KEYS}" > "${POST_CONFIG_FILE}"
+    if ! diff <(jq -S . "${POST_CONFIG_FILE}") <(jq -S . "${TRANSFORMED_APP_JSON_FILE}") >/dev/null 2>&1; then
         echo "  WARNING: target config after apply differs from the transformed definition:"
-        diff <(jq -S . <<<"${POST_CONFIG}") <(jq -S . "${TRANSFORMED_APP_JSON_FILE}") | sed 's/^/    /'
+        Show_app_config_diff "${POST_CONFIG_FILE}" "${TRANSFORMED_APP_JSON_FILE}"
     fi
     echo
     return 0

@@ -27,8 +27,8 @@ function Backup_immich_DB() {
 
     # Backup the Postgres DB
     echo "Making a backup of the Immich DB to /mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz and moving it from immich-pgdata-ds to immich-data-ds/backups"
-    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > \"/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz\"'"
-    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\""
+    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > \"/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz\"'${TEST_MODE:+" (Not done because of '--test' usage!)"}"
+    echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: mv \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz\" \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\"${TEST_MODE:+" (Not done because of '--test' usage!)"}"
     if [[ -z "${TEST_MODE}" ]]; then
         Execute_command "${SOURCE_LOCATION}" "docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > "/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz"'" \
             || Background_error "ERROR: DB backup failed."
@@ -87,7 +87,7 @@ function Restore_immich_DB() {
 
     # Remove existing Postgres DB
     echo "Removing the existing Immich DB before restoring the backup to it."
-    echo "Executing on TrueNAS-${TARGET_SERVER_ID^}: rm -rf \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/\"*"
+    echo "Executing on TrueNAS-${TARGET_SERVER_ID^}: rm -rf \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/\"*${TEST_MODE:+" (Not done because of '--test' usage!)"}"
     [[ -z "${TEST_MODE}" ]] && \
         Execute_command "${TARGET_LOCATION}" "rm -rf \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/\"*"
 
@@ -98,7 +98,7 @@ function Restore_immich_DB() {
 
     # Restore Postgres DB from backup
     echo "Restoring of the Immich DB from /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz"
-    echo "Executing on TrueNAS-${TARGET_SERVER_ID^}: gunzip < \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\" | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich --host=localhost"
+    echo "Executing on TrueNAS-${TARGET_SERVER_ID^}: gunzip < \"/mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz\" | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich --host=localhost${TEST_MODE:+" (Not done because of '--test' usage!)"}"
     if [[ -z "${TEST_MODE}" ]]; then
         Execute_command "${TARGET_LOCATION}" "gunzip < /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz | sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | docker exec -i \"${CONTAINERS_TO_START[0]}\" psql --username=immich --host=localhost" >"${DB_RESTORE_LOG}" 2>&1 \
             || Background_error "ERROR: DB restore failed. Check ${DB_RESTORE_LOG} for more details."
