@@ -6,8 +6,10 @@
 > Phase 2 run for real 2026-10-22 on a throwaway app (it-tools): `app.create`
 > and `app.update` both succeeded with no post-apply drift; `--test` runs on
 > Plex/Immich clean. First real update on immich-backup 2026-10-22 (master→backup,
-> `--stop-running-apps`): no post-apply drift. Next: `--test` in the
-> backup→master direction; then grafana (first `value_overrides` user).
+> `--stop-running-apps`): no post-apply drift. `--test` backup→master clean the
+> same day (Plex/Immich: nothing to push; reverse path rules and `keep_target`
+> correct). A real backup→master run waits for an actual failback.
+> Next: grafana (first `value_overrides` user).
 > Phase 3 not started.
 
 **Goal:** close the real gap in demand 1 (fast failover). Today
