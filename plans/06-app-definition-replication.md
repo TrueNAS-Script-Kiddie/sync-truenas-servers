@@ -3,7 +3,9 @@
 > **Status 2026-10-21:** phase 0 done — payload shapes confirmed
 > ([06-phase0-findings.md](06-phase0-findings.md)). Phase 1 done 2026-10-22:
 > bucket (b) converged on both hosts (`config/app_divergences.md`).
-> Phase 2 code (`lib/rep_app_definitions.bash`) awaits its first `--test` run.
+> Phase 2 run for real 2026-10-22 on a throwaway app (it-tools): `app.create`
+> and `app.update` both succeeded with no post-apply drift; `--test` runs on
+> Plex/Immich clean. Next: first real update on immich-backup.
 > Phase 3 not started.
 
 **Goal:** close the real gap in demand 1 (fast failover). Today
