@@ -1,4 +1,5 @@
 config.local.bash
 logs/
 tmp/
+config-mapping-examples/
 .claude/settings.local.json
