@@ -46,7 +46,8 @@ function Run_cleanup() {
 function Kill_tail() {
     if [[ -n "${TAIL_PID}" ]]; then
         sleep 1
-        kill "${TAIL_PID}"
+        # The tail is gone if the launching session was lost; the run itself is unaffected.
+        kill "${TAIL_PID}" 2>/dev/null
         TAIL_PID=""
     fi
 }

@@ -31,7 +31,7 @@ implement **one numbered item at a time** with exact locations and snippets.
    The sequence (stop writers → start pgvecto → dump / stop all → wipe → start
    pgvecto → restore → full app stop → start) is the only order that works.
 2. **Never use bare `exit` inside `lib/` functions** — always `Background_error`
-   (the script runs backgrounded under `nohup | tail -f`; a bare `exit` orphans
+   (the script runs backgrounded as a `systemd-run` unit behind `tail -f`; a bare `exit` orphans
    the tail). `cli.bash` parse-time code is the only exception.
 3. **Preserve the `LOCAL_SOURCE`/`REMOTE_SOURCE`/`LOCAL_TARGET`/`REMOTE_TARGET`
    direction model** (exactly one of each pair set). Plans may *add* derived

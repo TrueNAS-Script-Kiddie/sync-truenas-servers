@@ -6,7 +6,8 @@ declare SCRIPT_FILENAME="$(basename "$0")"
 declare SCRIPT_DIR
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)" \
     || { echo "ERROR: Failed to resolve SCRIPT_DIR"; exit 1; }
-declare LOG_DIR="${SCRIPT_DIR}/../logs"
+# Normalized (no '..'): systemd-run rejects non-normalized paths for its log output.
+declare LOG_DIR="${SCRIPT_DIR%/*}/logs"
 
 [[ ! -d "${LOG_DIR}" ]] && mkdir -p "${LOG_DIR}"
 
@@ -107,8 +108,14 @@ if [[ "$(id -un)" != "root" ]]; then
 fi
 
 if [[ -n "${RUNNING_IN_BACKGROUND}" ]]; then
+    # Take over the run lock the launcher released, before anything else: the peer's remote
+    # check relies on it. A local second run is refused by the fixed unit name instead.
+    exec 200>"${LOG_DIR}/.sync_truenas_servers.lock"
+    flock -w 30 200
+    LOCK_RC=$?
     sleep 2
     TAIL_PID="$(ps -ef | grep "tail -f ${LOG_FILE}" | grep -v grep | awk '{print $2}')"
+    (( LOCK_RC == 0 )) || Background_error "ERROR: Couldn't take over the run lock (${LOG_DIR}/.sync_truenas_servers.lock)."
     echo "${SCRIPT_FILENAME} is now running in the background, with parent PID ${TAIL_PID}"
     echo
     echo "######################################################################"
@@ -154,7 +161,23 @@ else
         echo "ERROR: A ${SCRIPT_FILENAME} run appears to be active on truenas-${REMOTE_SERVER_ID} (remote lock check failed)."
         exit 1
     fi
-    echo "Starting ${SCRIPT_FILENAME} in the background (logfile = ${LOG_FILE})."
-    nohup "$0" --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"  >>"${LOG_FILE}" 2>&1 & { sleep 1; tail -f "${LOG_FILE}"; }
+    # Run the worker as a transient systemd unit, not a child of this shell: a child of a
+    # 'sudo su' shell stays under sudo's log_subcmds ptrace+seccomp tracer, and once sudo
+    # loses track of it every exec fails with ENOSYS. The unit also survives a lost session.
+    # Fixed name: systemd refuses a second unit by that name while one is active, which keeps
+    # the local lock gap-free across the handover below.
+    declare UNIT_NAME="${SCRIPT_FILENAME}"
+    if ! systemd-run --quiet --collect --same-dir --unit="${UNIT_NAME}" \
+            --setenv=PATH="${PATH}" --setenv=HOME="${HOME}" \
+            --property=StandardOutput="append:${LOG_FILE}" --property=StandardError="append:${LOG_FILE}" \
+            "$(readlink -f "$0")" --running_in_background "${LOG_FILE}" "${BACKUP_OPTIONS[@]}"; then
+        echo "ERROR: Failed to start ${SCRIPT_FILENAME} as systemd unit ${UNIT_NAME}."
+        exit 1
+    fi
+    # The worker can't inherit this lock; release it so the worker can take it over.
+    exec 200>&-
+    echo "Started ${SCRIPT_FILENAME} in the background as systemd unit ${UNIT_NAME} (logfile = ${LOG_FILE})."
+    sleep 1
+    tail -f "${LOG_FILE}"
 fi
 exit 0

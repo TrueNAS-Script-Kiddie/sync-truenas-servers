@@ -21,7 +21,7 @@ Locally they're cloned to `C:\Apps\zfs_autobackup` and `C:\Apps\zfs-rollup` as t
 New-host deploy: SFTP doesn't set the exec bit on new files — `chmod +x bin/sync_truenas_servers` once after first push to a host. Same applies to `zfs-rollup/rollup.py`; `zfs_autobackup` also needs `autobackup-venv/` built fresh (SFTP excludes it) — see those projects' own docs.
 
 ## Key directories
-- [bin/sync_truenas_servers](bin/sync_truenas_servers) — entry point. Resolves paths, sources config + all `lib/` modules, re-execs itself with `--running_in_background` via `nohup`, dispatches subtasks, emails log.
+- [bin/sync_truenas_servers](bin/sync_truenas_servers) — entry point. Resolves paths, sources config + all `lib/` modules, re-execs itself with `--running_in_background` as a transient `systemd-run` unit (outside sudo's `log_subcmds` tracer), dispatches subtasks, emails log.
 - [lib/](lib/) — one module per concern. All functions share globals set by the entry script + `cli.bash`.
   - [common.bash](lib/common.bash) — `Execute_command` (local/remote/test/verbose mode multiplexer), `Background_error`, `Resolve_pool`.
   - [cli.bash](lib/cli.bash) — `Process_command_line_options`, `Help`. Sets `TASK`, `PERFORM_*` flags, `APP_LIST`, `VM_LIST`, and the `LOCAL_SOURCE`/`REMOTE_SOURCE`/`LOCAL_TARGET`/`REMOTE_TARGET` direction vars.

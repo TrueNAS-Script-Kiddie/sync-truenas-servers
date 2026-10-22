@@ -86,8 +86,10 @@ Worth knowing before the first run:
 - **`--test` still touches app and container state.** It suppresses everything that changes
   data, but apps and Docker containers are genuinely stopped and started so the run exercises
   the real sequence. That is intentional, not a leak.
-- **The run detaches.** The foreground process re-execs itself under `nohup` and tails the log,
-  so closing the terminal does not kill it. It **always exits 0** — success or failure is
+- **The run detaches.** The foreground process re-execs itself as a transient systemd unit
+  (`systemd-run`) and tails the log, so a closed terminal or lost session does not touch it.
+  Not `nohup`: a child of a `sudo su` shell stays under sudo's `log_subcmds` tracer, and once
+  sudo loses track of it every exec fails with `ENOSYS`. It **always exits 0** — success or failure is
   reported by email and in `logs/`, never by the exit code, so don't chain `&&` off a run.
 - **A running VM is skipped by default.** `--stop-running-vms` opts into stopping it (always
   gracefully) and starting it again afterwards.
