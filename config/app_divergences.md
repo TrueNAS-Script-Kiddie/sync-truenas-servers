@@ -1,7 +1,6 @@
 # App config divergences (plan 06 phase 1 — spec for `app_config_mappings.json`)
 
-**Status: diffed 2026-10-21; bucket (b) not yet converged, two rows await a
-decision.** Server-managed keys (`ix_*`, `release_name`) are stripped before
+**Status: bucket (b) converged on both hosts 2026-10-22.** Server-managed keys (`ix_*`, `release_name`) are stripped before
 diffing and never synced. Per app in `apps.json`:
 
 ```bash
@@ -36,11 +35,11 @@ Certificate ids: `midclt call certificate.query | jq '.[] | {id, name}'` on each
 
 | Field | Bucket | master | backup | Action |
 |---|---|---|---|---|
-| `network.web_port.port_number` | b | `32400` | `33400` | converge on `32400` (Plex default) |
-| `plex.allowed_networks` | b | `192.168.0.0/16` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | converge |
-| `resources.limits.cpus` | a or b — decide | `4` | `2` | hardware-dependent → `value_overrides` rule; otherwise converge |
-| `storage.transcode` | a or b — decide | `type: temporary` | `type: tmpfs`, `tmpfs_config.size: 2048` | RAM-dependent → keep per host (needs a rule type for objects); otherwise converge |
-| `plex.claim_token` | a | _(redacted)_ | _(redacted)_ | plex.tv identity; a claim token expires minutes after issue, so a stored one is stale — clear it on both hosts |
+| `network.web_port.port_number` | b | `32400` | `33400` | ✅ `32400` on both (catalog default); router forward `Plex-Backup` external = internal `32400`, matching Remote Access' manual public port |
+| `plex.allowed_networks` | b | `192.168.0.0/16` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | ✅ **empty** on both (TrueNAS field and Plex Web): it becomes Plex's `allowedNetworks` — clients from these IPs need no sign-in and are treated as the server owner (all libraries, server settings) — not bandwidth "LAN Networks", whatever the TrueNAS field help says. The image applies it only when the container is created and skips an empty value, so also clear it in Plex Web (Settings → Network → "List of IP addresses and networks that are allowed without auth") |
+| `resources.limits.cpus` | b | `4` | `2` | ✅ `4` on both (same 12-thread CPU; a cap, not a reservation) |
+| `storage.transcode` | b | `type: temporary` | `type: tmpfs`, `tmpfs_config.size: 2048` | ✅ `temporary` on both (catalog default): can't fill up mid-stream, uses no RAM, SSD wear negligible |
+| `plex.claim_token` | — | _(redacted)_ | _(redacted)_ | none: used only to link an unlinked server to plex.tv, ignored once linked (the link lives in `Preferences.xml`, never synced) |
 | `storage.config`, `storage.logs` host paths | c | `ssdmaster-pool/…/app-ds/plex-ds` | `backup-pool/…/app-ds/plex-ds` | in `string_rewrites` |
 | `storage.data.host_path_config.acl.path` | c | `master-pool/encrypted-ds/media-ds` | `backup-pool/encrypted-ds/media-ds` | in `string_rewrites` |
 
@@ -48,7 +47,7 @@ Certificate ids: `midclt call certificate.query | jq '.[] | {id, name}'` on each
 
 | Field | Bucket | master | backup | Action |
 |---|---|---|---|---|
-| `network.web_port.port_number` | b | `30041` | `30042` | converge (pick one) |
-| installed catalog version | b | `1.14.56` (Immich v3.3.4) | `1.14.58` (v3.3.5) | refresh master's catalog, upgrade `immich-master` |
-| `immich.db_password`, `immich.redis_password` | ? | _(redacted)_ | _(redacted)_ | compare by hash; differing values make an update change the target's |
+| `network.web_port.port_number` | b | `30041` | `30042` | ✅ `30041` on both (catalog default) |
+| installed catalog version | b | `1.14.56` (Immich v3.3.4) | `1.14.58` (v3.3.5) | ✅ converged (master upgraded) |
+| `immich.db_password`, `immich.redis_password` | — | _(redacted)_ | _(redacted)_ | equal on both hosts (hash-compared) |
 | `storage.data`, `storage.postgres_data` host paths | c | `ssdmaster-pool/…/immich-ds/…` | `backup-pool/…/immich-ds/…` | in `string_rewrites` |

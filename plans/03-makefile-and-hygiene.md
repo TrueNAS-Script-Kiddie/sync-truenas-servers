@@ -11,11 +11,11 @@ was no evidence they'd ever completed a real deploy. Deleted `Makefile`
 outright rather than fixing it; `AGENTS.md` documents SFTP as the mechanism.
 
 Items 1–4 (the actual fixes) are moot post-deletion and removed from this
-file. Items 5–6 below are unrelated repo hygiene, still open.
+file. Items 5–6 below are unrelated repo hygiene — both done.
 
 ---
 
-## 5. Add `.gitattributes` (line-ending safety)
+## 5. Add `.gitattributes` (line-ending safety) — ✅ DONE (`ee813b3`; index holds no CRLF files)
 
 Per the user's own way-of-working rule, and genuinely load-bearing here: the
 repo is edited on Windows and deployed to Linux; a CRLF-infected bash file
@@ -33,7 +33,7 @@ Then normalize once: `git add --renormalize .` and commit. Also spot-check the
 SFTP-synced copies on the host afterwards (`file bin/sync_truenas_servers` or
 `grep -rl $'\r' lib/` on the server) since SFTP copies bytes as-is.
 
-## 6. Add a README.md (optional)
+## 6. Add a README.md (optional) — ✅ DONE (`8a462f6`)
 
 Repo-hygiene convention (README + .gitignore + .gitattributes). A short
 README: what it does (2 sentences), the two example invocations from

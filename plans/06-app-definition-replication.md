@@ -1,8 +1,8 @@
 # Plan 06 — App-definition replication & config convergence
 
 > **Status 2026-10-21:** phase 0 done — payload shapes confirmed
-> ([06-phase0-findings.md](06-phase0-findings.md)). Phase 1 diffed
-> (`config/app_divergences.md`); converging bucket (b) on the hosts is next.
+> ([06-phase0-findings.md](06-phase0-findings.md)). Phase 1 done 2026-10-22:
+> bucket (b) converged on both hosts (`config/app_divergences.md`).
 > Phase 2 code (`lib/rep_app_definitions.bash`) awaits its first `--test` run.
 > Phase 3 not started.
 
