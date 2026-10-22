@@ -26,7 +26,12 @@
       "post_action": "Restore_immich_DB"
     },
     {
-      "name": "grafana"
+      "name": "grafana",
+      "app_base_path": "grafana-ds",
+      "app_dir_list": [
+        "data",
+        "plugins"
+      ]
     }
   ]
 }

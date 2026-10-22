@@ -11,7 +11,9 @@
 > correct). A real backup→master run waits for an actual failback.
 > grafana-backup created 2026-10-23 (master→backup): no post-apply drift, serves
 > the `truenas-backup` cert. Target dataset + host paths were made by hand first.
-> Next: grafana data replication (`apps.json` data entry).
+> grafana data replicated the same day (`data/` SQLite + `plugins/`). The Loki
+> data source in `grafana.db` still points at master (`192.168.0.10:3100`);
+> settle together with the loki/promtail/syslog-ng row.
 > Phase 3 not started.
 
 **Goal:** close the real gap in demand 1 (fast failover). Today
@@ -39,7 +41,7 @@ the two in `apps.json` today. Each row stays until it works.
 |---|---|---|---|
 | plex | — | in `apps.json` | ready for first real run |
 | immich | — | in `apps.json` (DB dump/restore) | ready for first real run |
-| grafana | ✅ `certificate_id` override (`value_overrides`, 2↔3) | data dir → `apps.json` entry | definition done; data open |
+| grafana | ✅ `certificate_id` override (`value_overrides`, 2↔3) | ✅ `data`, `plugins` in `apps.json`; Loki data source URL in `grafana.db` stays master's | done; data source open (see loki row) |
 | forgejo | `certificate_id` override | repos + DB; the backup instance must stay passive (never two writable forges) | open — passive-instance policy to decide |
 | firefly-iii | target host paths must exist before `app.create` | Postgres DB dump/restore (Immich pattern); `APP_KEY` must match | open |
 | loki, promtail, syslog-ng | `ix-app` catalog app — payload shape unverified (phase 0 again) | per-host values (what they ship/label) to classify (phase 1) | open |
