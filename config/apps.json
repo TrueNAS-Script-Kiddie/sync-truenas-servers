@@ -24,6 +24,9 @@
       "requires_target_running": true,
       "pre_action": "Backup_immich_DB",
       "post_action": "Restore_immich_DB"
+    },
+    {
+      "name": "grafana"
     }
   ]
 }

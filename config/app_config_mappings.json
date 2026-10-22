@@ -41,8 +41,8 @@
     "rules": [
       {
         "key": "certificate_id",
-        "master": null,
-        "backup": null
+        "master": 2,
+        "backup": 3
       }
     ]
   },

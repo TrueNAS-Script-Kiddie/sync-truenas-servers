@@ -27,7 +27,7 @@ bucket (b) rows are eliminated and listed here only until converged.
 | host IP (Root URLs etc.) | a | `192.168.0.10` | `192.168.0.60` | in `string_rewrites` |
 | hostname | a | `truenas-master` | `truenas-backup` | in `string_rewrites` |
 | app name suffix | a (until phase 3) | `<app>-master` | `<app>-backup` | built into the transform (naming convention, not config) |
-| GUI certificate ID | a | _(fill in: id of `truenas-master` cert)_ | _(fill in: id of `truenas-backup` cert)_ | placeholder in `value_overrides` — fill both ids |
+| GUI certificate ID | a | `2` (`truenas-master`) | `3` (`truenas-backup`) | in `value_overrides` |
 
 Certificate ids: `midclt call certificate.query | jq '.[] | {id, name}'` on each host.
 
