@@ -5,7 +5,8 @@
 # Guardrails (plans/06-app-definition-replication.md):
 #   - NEVER calls app.delete.
 #   - A RUNNING (or otherwise non-STOPPED/CRASHED) target app is skipped with a loud
-#     warning — it may be a test-in-progress and must never be clobbered.
+#     warning — it may be a test-in-progress and must never be clobbered. Opt-in
+#     --stop-running-apps stops a RUNNING one for the update and starts it again.
 #   - An update is skipped when the catalog versions differ (app.update keeps the target's version).
 #   - Manual-only subtask: not part of --subtask=all or the no-subtask default.
 #
@@ -207,6 +208,14 @@ function Apply_app_definition() {
     local TARGET_FULL_NAME="${APP_NAME}-${TARGET_SERVER_ID}"
     local TARGET_APP_JSON_FILE="${APP_DEF_TMP_DIR}/json/per_app/${APP_NAME}.truenas-${TARGET_SERVER_ID}.target.json"
     local TARGET_STATE VALUES_JSON PAYLOAD QUOTED_PAYLOAD JOBID POST_CONFIG_FILE
+    local TARGET_STOPPED_BY_US="false"
+
+    # Return a target that --stop-running-apps stopped to its previous (running) state
+    function l_Restart_target_if_stopped_by_us() {
+        [[ "${TARGET_STOPPED_BY_US}" == "true" ]] || return 0
+        Start_app_if_stopped "${TARGET_FULL_NAME}" "${TARGET_LOCATION}"
+        Unregister_cleanup
+    }
 
     TARGET_STATE="$(jq -r --arg N "${TARGET_FULL_NAME}" '.[] | select(.name==$N) | .state' <<<"${TARGET_ALL_APP_JSON}")"
     VALUES_JSON="$(jq -c . "${TRANSFORMED_APP_JSON_FILE}")"
@@ -245,7 +254,7 @@ function Apply_app_definition() {
             || Background_error "ERROR: app.create for '${TARGET_FULL_NAME}' did not return a job id. Output: ${JOBID}\nIf version ${VERSION} is not available on truenas-${TARGET_SERVER_ID}, sync/refresh its catalog first — this pipeline never falls back to 'latest'."
         Wait_for_app_job "${JOBID}" "${TARGET_LOCATION}" "app.create of '${TARGET_FULL_NAME}' (if version ${VERSION} is unavailable on the target, sync catalogs first)"
 
-    elif [[ "${TARGET_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
+    elif [[ "${TARGET_STATE}" =~ ^(STOPPED|CRASHED)$ || ( "${TARGET_STATE}" == "RUNNING" && -n "${STOP_RUNNING_APPS}" ) ]]; then
         # app.update keeps the target's installed version, and the valid values depend on it.
         local SOURCE_VERSION TARGET_VERSION
         SOURCE_VERSION="$(jq -r --arg N "${SOURCE_FULL_NAME}" '.[] | select(.name==$N) | .version' <<<"${SOURCE_ALL_APP_JSON}")"
@@ -255,12 +264,21 @@ function Apply_app_definition() {
             return 1
         fi
 
+        if [[ "${TARGET_STATE}" == "RUNNING" ]]; then
+            # Register the undo BEFORE stopping, so even a timed-out stop still gets started again.
+            # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
+            Register_cleanup 'Start_app_if_stopped "${TARGET_FULL_NAME}" "${TARGET_LOCATION}"'
+            TARGET_STOPPED_BY_US="true"
+            echo -n "Stopping ${TARGET_LOCATION} ${TARGET_FULL_NAME} for this run (--stop-running-apps)."
+            Control_app "${TARGET_FULL_NAME}" stop "${TARGET_LOCATION}"
+        fi
+
         PAYLOAD="$(jq -nc --argjson values "${VALUES_JSON}" '{values: $values}')"
 
-        echo -n "Updating app '${TARGET_FULL_NAME}' (state ${TARGET_STATE}) on truenas-${TARGET_SERVER_ID}...${TEST_MODE:+" (Not done because of '--test' usage!)"}"
+        echo -n "Updating app '${TARGET_FULL_NAME}' ($([[ "${TARGET_STOPPED_BY_US}" == "true" ]] && echo "was" || echo "state") ${TARGET_STATE}) on truenas-${TARGET_SERVER_ID}...${TEST_MODE:+" (Not done because of '--test' usage!)"}"
         echo
         echo "  truenas-${TARGET_SERVER_ID} - midclt call app.update ${TARGET_FULL_NAME} (values from ${TRANSFORMED_APP_JSON_FILE})"
-        [[ -n "${TEST_MODE}" ]] && { echo; return 0; }
+        [[ -n "${TEST_MODE}" ]] && { l_Restart_target_if_stopped_by_us; echo; return 0; }
 
         QUOTED_PAYLOAD=${PAYLOAD//"'"/"'\''"}
         JOBID="$(Execute_command "${TARGET_LOCATION}" "midclt call app.update \"${TARGET_FULL_NAME}\" '${QUOTED_PAYLOAD}'")"
@@ -270,7 +288,7 @@ function Apply_app_definition() {
 
     else
         echo "  !!! WARNING: app '${TARGET_FULL_NAME}' on truenas-${TARGET_SERVER_ID} is ${TARGET_STATE} — definition NOT touched."
-        echo "  !!! A running target may be a test-in-progress; stop it there first if you want its definition synced."
+        echo "  !!! A running target may be a test-in-progress; stop it there first, or pass --stop-running-apps, if you want its definition synced."
         echo
         return 1
     fi
@@ -283,6 +301,7 @@ function Apply_app_definition() {
         echo "  WARNING: target config after apply differs from the transformed definition:"
         Show_app_config_diff "${POST_CONFIG_FILE}" "${TRANSFORMED_APP_JSON_FILE}"
     fi
+    l_Restart_target_if_stopped_by_us
     echo
     return 0
 }

@@ -5,7 +5,9 @@
 > bucket (b) converged on both hosts (`config/app_divergences.md`).
 > Phase 2 run for real 2026-10-22 on a throwaway app (it-tools): `app.create`
 > and `app.update` both succeeded with no post-apply drift; `--test` runs on
-> Plex/Immich clean. Next: first real update on immich-backup.
+> Plex/Immich clean. First real update on immich-backup 2026-10-22 (master→backup,
+> `--stop-running-apps`): no post-apply drift. Next: `--test` in the
+> backup→master direction; then grafana (first `value_overrides` user).
 > Phase 3 not started.
 
 **Goal:** close the real gap in demand 1 (fast failover). Today
@@ -45,7 +47,10 @@ the two in `apps.json` today. Each row stays until it works.
   can remove ix_volumes (data loss). Semantics are strictly: create if
   missing, update if present-and-stopped, **skip with a loud warning if the
   target app is RUNNING** — a running target instance may be a
-  test-in-progress (demand 2) and must never be clobbered by a sync.
+  test-in-progress (demand 2) and must never be clobbered by a sync. Opt-in
+  `--stop-running-apps` overrides this per run (stop, update, start again);
+  kept separate from `--start-stopped-apps` because stopping a live app is
+  the riskier choice and must be made on purpose.
 - **Never transform or copy external-identity values** (Plex claim/GUID
   territory, anything registering with a third-party service). These stay
   per-instance, exactly like `app_dir_list` already protects their files.

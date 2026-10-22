@@ -44,6 +44,21 @@ function Stop_app_if_active() {
     fi
 }
 
+# Start an app only if it is stopped — the mirror of Stop_app_if_active, for --stop-running-apps.
+# Usage: Start_app_if_stopped <FULL_APP_NAME> <LOCATION>
+function Start_app_if_stopped() {
+    local FULL_APP_NAME="$1"
+    local LOCATION="$2"
+    local APP_STATE
+
+    APP_STATE="$(Execute_command "${LOCATION}" \
+        "midclt call app.query | jq -r '.[] | select(.name==\"${FULL_APP_NAME}\") | .state'")"
+    if [[ "${APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
+        echo -n "Starting ${LOCATION} ${FULL_APP_NAME} again, as it was running before this run."
+        Control_app "${FULL_APP_NAME}" start "${LOCATION}"
+    fi
+}
+
 # Explain a source/target app version mismatch and how to fix it in the GUI.
 # Usage: Print_app_version_mismatch <APP_NAME> <WHAT> <SOURCE_VERSION> <TARGET_VERSION>
 function Print_app_version_mismatch() {

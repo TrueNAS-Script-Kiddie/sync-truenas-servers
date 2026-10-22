@@ -21,7 +21,8 @@ One entry script dispatches four replication subtasks:
 
 A fifth subtask, `app_definition_replication`, replicates app *definitions* (`midclt app.create` /
 `app.update`, never `app.delete`): it creates a missing target app, updates a stopped one with
-the same catalog version, and leaves a running one alone. It is **manual-only**; create and
+the same catalog version, and leaves a running one alone (`--stop-running-apps` stops it for the
+update and starts it again). It is **manual-only**; create and
 update are proven on a throwaway app, not yet on Plex/Immich — see
 [plans/06](plans/06-app-definition-replication.md).
 
@@ -76,8 +77,8 @@ Then the real thing:
 # One subtask, one app
 ./bin/sync_truenas_servers --task=master_to_backup --subtask=app_replication --app=immich
 
-# Full app sync: definitions first, then data (stop the target apps first; Immich ends stopped)
-./bin/sync_truenas_servers --task=master_to_backup --subtask=app_definition_replication --subtask=app_replication --start-stopped-apps
+# Full app sync: definitions first, then data; every target app ends in the state it started in
+./bin/sync_truenas_servers --task=master_to_backup --subtask=app_definition_replication --subtask=app_replication --stop-running-apps --start-stopped-apps
 
 # Two VMs, backup -> master, stopping them first if they happen to be running
 ./bin/sync_truenas_servers --task=backup_to_master --subtask=vm_replication --vm=VM1 --vm=VM2 --stop-running-vms
@@ -96,8 +97,9 @@ Worth knowing before the first run:
   Not `nohup`: a child of a `sudo su` shell stays under sudo's `log_subcmds` tracer, and once
   sudo loses track of it every exec fails with `ENOSYS`. It **always exits 0** — success or failure is
   reported by email and in `logs/`, never by the exit code, so don't chain `&&` off a run.
-- **`app_definition_replication` never stops or starts an existing app**; an app it creates
-  starts like any new install.
+- **`app_definition_replication` skips a running target app by default.** `--stop-running-apps`
+  opts into stopping it and starting it again afterwards; an app it creates starts like any new
+  install.
 - **A running VM is skipped by default.** `--stop-running-vms` opts into stopping it (always
   gracefully) and starting it again afterwards.
 - **Concurrent runs are refused**: a lock in `logs/` blocks a second run on the same host, and

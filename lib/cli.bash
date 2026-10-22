@@ -6,7 +6,7 @@ function Help() {
     echo "Help for ${SCRIPT_FILENAME}"
     echo
     echo -e "${SCRIPT_FILENAME} [-h] [--help]\t\t\t\tDisplays this help message."
-    echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>] [--vm=<name>*] [--stop-running-vms] [--start-stopped-apps]"
+    echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>] [--vm=<name>*] [--stop-running-vms] [--start-stopped-apps] [--stop-running-apps]"
     echo -e "\t\t\t\t\t\t\t\tPerforms the requested replication."
     echo
     echo -e "--test"
@@ -26,6 +26,11 @@ function Help() {
     echo -e "\tStart a stopped target app that must run to receive its data (Immich: the DB"
     echo -e "\trestore runs inside it), and stop it again afterwards. Without this option,"
     echo -e "\tsuch an app is skipped. Only valid with the app_replication subtask."
+    echo
+    echo -e "--stop-running-apps"
+    echo -e "\tStop a running target app so its definition can be updated, and start it"
+    echo -e "\tagain afterwards. Without this option, a running target app is skipped."
+    echo -e "\tOnly valid with the app_definition_replication subtask."
     echo
     echo "Allowed tasks:"
     echo -e "master_to_backup\t\t\t\t\t\tPerform a sync from the TrueNAS-Master server to the TrueNAS-Backup server (= backup)."
@@ -136,6 +141,10 @@ function Process_command_line_options() {
             # shellcheck disable=SC2034  # consumed in lib/rep_apps.bash
             START_STOPPED_APPS="true"
             ;;
+        --stop-running-apps)
+            # shellcheck disable=SC2034  # consumed in lib/rep_app_definitions.bash
+            STOP_RUNNING_APPS="true"
+            ;;
         --running_in_background)
             # shellcheck disable=SC2034  # consumed by bin/sync_truenas_servers
             RUNNING_IN_BACKGROUND="true"
@@ -203,7 +212,13 @@ function Process_command_line_options() {
         echo "ERROR: --start-stopped-apps can only be used when the app_replication subtask is enabled."
         exit 1
     fi
-    
+
+    # --stop-running-apps is only allowed if $PERFORM_APP_DEF_REP=true
+    if [[ -n "${STOP_RUNNING_APPS}" && -z "${PERFORM_APP_DEF_REP}" ]]; then
+        echo "ERROR: --stop-running-apps can only be used when the app_definition_replication subtask is enabled."
+        exit 1
+    fi
+
 
     # Define source and target
     # shellcheck disable=SC2034  # LOCAL_SOURCE/REMOTE_SOURCE/LOCAL_TARGET/REMOTE_TARGET consumed across lib/*.bash (direction model, see architectural_patterns.md)
