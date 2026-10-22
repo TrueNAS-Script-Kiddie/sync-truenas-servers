@@ -1,13 +1,14 @@
 # Plan 08 — Known operational issues (external causes, not code bugs)
 
 Three recurring issues observed in real runs. #1 and #2 are rooted **outside**
-this script's own logic; #3 was a **timing bug in the script's own wait logic**
-— diagnosed from a real 2026-07-07 failure and **fixed**. Documented so they
-aren't mistaken for regressions.
+this script's own logic: #1 is diagnosed, with a manual fix procedure to repeat
+whenever it recurs; #2 is unresolved. #3 was a **timing bug in the script's own
+wait logic** — diagnosed from a real 2026-07-07 failure and **fixed**.
+Documented so they aren't mistaken for regressions.
 
 ---
 
-## 1. Immich Postgres collation-version-mismatch warning
+## 1. Immich Postgres collation-version-mismatch warning — DIAGNOSED + FIXED (2026-10-22), RECURS
 
 **Status:** clean on both hosts (2026-10-22). Recurs after every Postgres
 *major* upgrade of the Immich app — follow the procedure below.
