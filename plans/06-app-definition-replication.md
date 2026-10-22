@@ -22,6 +22,21 @@ findings are written down, because the exact `midclt app.*` payload shapes on
 Goldeye must be confirmed on a live host — do not trust this document (or any
 model's memory) for those shapes.
 
+## Scope: every app on master
+
+The goal is that **all** apps on master replicate (definition + data), not only
+the two in `apps.json` today. Each row stays until it works.
+
+| App | Definition replication needs | Data replication needs | Status |
+|---|---|---|---|
+| plex | — | in `apps.json` | ready for first real run |
+| immich | — | in `apps.json` (DB dump/restore) | ready for first real run |
+| grafana | `certificate_id` override (per-host cert ids in `value_overrides`) | data dir → `apps.json` entry | open |
+| forgejo | `certificate_id` override | repos + DB; the backup instance must stay passive (never two writable forges) | open — passive-instance policy to decide |
+| firefly-iii | target host paths must exist before `app.create` | Postgres DB dump/restore (Immich pattern); `APP_KEY` must match | open |
+| loki, promtail, syslog-ng | `ix-app` catalog app — payload shape unverified (phase 0 again) | per-host values (what they ship/label) to classify (phase 1) | open |
+| hermes-agent | custom app — `custom_compose_config` payload unverified; name lacks the `-<server>` suffix the code relies on | self-modifying (server is source of truth) — policy to decide | open |
+
 ## Non-negotiable guardrails (in addition to the global ones)
 
 - **The pipeline must NEVER call `app.delete`.** `app.delete` has options that

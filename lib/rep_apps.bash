@@ -173,9 +173,17 @@ function Perform_app_replication() {
         TARGET_STARTED_BY_US="false"
 
         APP_NAME="$(jq -r '.name' <<< "${APP_JSON}")"
-        mapfile -t APP_DIRS_TO_RSYNC_LIST < <(jq -r '.app_dir_list[]' <<< "${APP_JSON}")
+        mapfile -t APP_DIRS_TO_RSYNC_LIST < <(jq -r '.app_dir_list // [] | .[]' <<< "${APP_JSON}")
 
-        # Prepare the rsyncs 
+        # A definitions-only entry (just a name) has no data to replicate
+        if [[ ${#APP_DIRS_TO_RSYNC_LIST[@]} -eq 0 ]]; then
+            echo "Replication skipped for app ${APP_NAME}: no data folders configured in apps.json — nothing to replicate."
+            echo
+            ((SKIPPED++))
+            continue
+        fi
+
+        # Prepare the rsyncs
         FULL_SOURCE_PATH="$([[ "${SOURCE_LOCATION}" == "remote" ]] && echo "truenas-${SOURCE_SERVER_ID}:")/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/$(jq -r '.app_base_path' <<< "${APP_JSON}")"
         FULL_TARGET_PATH="$([[ "${TARGET_LOCATION}" == "remote" ]] && echo "truenas-${TARGET_SERVER_ID}:")/mnt/${TARGET_POOL}/encrypted-ds/app-ds/$(jq -r '.app_base_path' <<< "${APP_JSON}")"
 
