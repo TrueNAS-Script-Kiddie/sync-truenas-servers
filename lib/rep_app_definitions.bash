@@ -1,16 +1,16 @@
 #!/usr/bin/bash
 # lib/rep_app_definitions.bash
-# TrueNAS App-definition replication (plan 06 phase 2): extract → transform → create/update.
+# TrueNAS app-definition replication: extract → transform → create/update.
 #
-# Guardrails (plans/06-app-definition-replication.md):
-#   - Does not call app.delete (when it may: plan 06 guardrails).
+# Rules:
+#   - Never calls app.delete.
 #   - A RUNNING (or otherwise non-STOPPED/CRASHED) target app is skipped with a loud
 #     warning — it may be a test-in-progress. Opt-in
 #     --stop-running-apps stops a RUNNING one for the update and starts it again.
 #   - An update is skipped when the catalog versions differ (app.update keeps the target's version).
 #   - Manual-only subtask: not part of --subtask=all or the no-subtask default.
 #
-# midclt app.* payload shapes verified on Goldeye: plans/06-phase0-findings.md.
+# midclt app.* payload shapes: docs/truenas-api.md.
 
 # Workspace
 APP_DEF_TMP_DIR="${SCRIPT_DIR}/../tmp/apps"
@@ -84,6 +84,7 @@ function Extract_app_definitions() {
 
 # Print an indented diff of two app-config JSON files with secret-looking values masked
 # (logs are emailed): equal secrets show as REDACTED, differing ones as REDACTED (before/after).
+# A value counts as secret by its key, or for an env-style {name, value} entry by its name.
 # Usage: Show_app_config_diff <BEFORE_JSON_FILE> <AFTER_JSON_FILE>
 function Show_app_config_diff() {
     local BEFORE_FILE="$1"
@@ -93,7 +94,8 @@ function Show_app_config_diff() {
         ($A[0]) as $a | ($B[0]) as $b
         | (if $SIDE == "before" then $a else $b end) as $doc
         | reduce ($doc | paths(scalars)) as $p ($doc;
-            if ($p[-1] | type) == "string" and ($p[-1] | test("pass|secret|token|key"; "i")) and (getpath($p) | type) == "string"
+            (if $p[-1] == "value" then ($doc | getpath($p[:-1]) | .name? // "") else $p[-1] end) as $field
+            | if ($field | type) == "string" and ($field | test("pass|secret|token|key"; "i")) and (getpath($p) | type) == "string"
             then setpath($p; if ($a | getpath($p)) == ($b | getpath($p)) then "REDACTED" else "REDACTED (\($SIDE))" end)
             else . end)'
 
@@ -234,7 +236,7 @@ function Apply_app_definition() {
         CATALOG_APP="$(jq -r --arg N "${SOURCE_FULL_NAME}" '.[] | select(.name==$N) | .metadata.name' <<<"${SOURCE_ALL_APP_JSON}")"
         VERSION="$(jq -r --arg N "${SOURCE_FULL_NAME}" '.[] | select(.name==$N) | .version' <<<"${SOURCE_ALL_APP_JSON}")"
         { [[ -n "${TRAIN}" && "${TRAIN}" != "null" && -n "${CATALOG_APP}" && "${CATALOG_APP}" != "null" && -n "${VERSION}" && "${VERSION}" != "null" ]]; } \
-            || Background_error "ERROR: Could not determine train/catalog_app/version for '${SOURCE_FULL_NAME}' from app.query (see plans/06-phase0-findings.md item 1)."
+            || Background_error "ERROR: Could not determine train/catalog_app/version for '${SOURCE_FULL_NAME}' from app.query."
 
         PAYLOAD="$(jq -nc \
             --arg app_name "${TARGET_FULL_NAME}" --arg train "${TRAIN}" \
@@ -294,7 +296,7 @@ function Apply_app_definition() {
     fi
 
     # Post-apply check: differences only WARN — server-added defaults are expected
-    # noise on the first runs (see plans/06-phase0-findings.md).
+    # noise; none seen so far.
     POST_CONFIG_FILE="${APP_DEF_TMP_DIR}/json/per_app/${APP_NAME}.truenas-${TARGET_SERVER_ID}.post_apply.json"
     Execute_command "${TARGET_LOCATION}" "midclt call app.config \"${TARGET_FULL_NAME}\"" 2>/dev/null | jq "${APP_DEF_SERVER_KEYS}" > "${POST_CONFIG_FILE}"
     if ! diff <(jq -S . "${POST_CONFIG_FILE}") <(jq -S . "${TRANSFORMED_APP_JSON_FILE}") >/dev/null 2>&1; then
@@ -345,7 +347,7 @@ function Perform_app_definition_replication() {
         CUSTOM_APP="$(jq -r --arg N "${SOURCE_FULL_NAME}" '.[] | select(.name==$N) | .custom_app // false' <<<"${SOURCE_ALL_APP_JSON}")"
         if [[ "${CUSTOM_APP}" == "true" ]]; then
             # Custom apps need a custom_compose_config payload — unsupported until verified.
-            echo "  !!! WARNING: '${SOURCE_FULL_NAME}' is a custom app — skipped (compose payload shape unverified, see plans/06-phase0-findings.md)."
+            echo "  !!! WARNING: '${SOURCE_FULL_NAME}' is a custom app — skipped (custom apps are not supported yet)."
             echo
             ((SKIPPED++))
             continue

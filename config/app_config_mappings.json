@@ -1,7 +1,7 @@
 {
   "_doc": [
-    "Transform rules for app-definition replication (plan 06 phase 2), applied to the full app.config JSON.",
-    "Spec lives in config/app_divergences.md; fill placeholders (null sides) from phase 1 findings.",
+    "Transform rules for app-definition replication, applied to the full app.config JSON.",
+    "Spec: config/app_divergences.md.",
     "string_rewrites: literal replace <source value> -> <target value> in every string value, only where not touching a letter or digit on either side (192.168.0.10 leaves 192.168.0.100 alone); rules apply in order; optional 'scope' substring must also be present in the string.",
     "value_overrides: for any object key matching 'key' whose value equals the source side exactly, set the target side. For non-string per-host values (certificate IDs).",
     "keep_target: the value at 'path' is never taken from the source; the target keeps its own, or gets 'default' when it has none (app not installed yet). For per-instance identity (Plex claim token). Applied last.",

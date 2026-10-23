@@ -44,7 +44,7 @@ function Backup_immich_DB() {
 }
 
 function Restore_immich_DB() {
-    function Wait_for_pg_ready() {
+    function l_Wait_for_pg_ready() {
         local CONTAINER_NAME="$1"
         local START_TIME="$(date +%s)"
         local MAX_TIMEOUT=60
@@ -94,7 +94,7 @@ function Restore_immich_DB() {
     # Start Postgres DB
     Control_docker_containers "${TARGET_LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
 
-    Wait_for_pg_ready "${CONTAINERS_TO_START[0]}"
+    l_Wait_for_pg_ready "${CONTAINERS_TO_START[0]}"
 
     # Restore Postgres DB from backup
     echo "Restoring of the Immich DB from /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz"

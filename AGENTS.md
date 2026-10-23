@@ -1,69 +1,74 @@
 # sync_truenas_servers
 
 ## Project overview
-Bash-based replication orchestrator for a pair of TrueNAS SCALE servers (`truenas-master` ⇄ `truenas-backup`) `truenas-master` is the always-on primary; `truenas-backup` is mostly powered off and must be able to fully take over (failover, as independently of truenas-master as possible) and hand back (failback). Both hosts have the same apps/VMs installed as separate instances, running at the same time whenever truenas-backup is on (**dual-active**), so replication syncs *content* and definitions between them, rewriting every per-host value. Purpose in full: README "Purpose". A single entry script coordinates four replication subtasks: TrueNAS Apps (rsync + app stop/start via `midclt`), VMs (JSON-driven definition transform + zvol replication), ZFS filesystems (via `zfs_autobackup`), and snapshot rollup (via external `zfs-rollup`). Must run as `root`; logs go to `logs/` and run-state JSON to `tmp/vms/`.
+Bash orchestrator replicating apps, VMs, ZFS filesystems and snapshots between two TrueNAS SCALE
+hosts. `truenas-master` is the always-on primary; `truenas-backup` is mostly powered off and must
+be able to fully take over (failover, independent of truenas-master) and hand back (failback).
+Both hosts run the same apps/VMs as separate instances (dual-active whenever truenas-backup is
+on), so replication syncs content and definitions, rewriting every per-host value. Purpose,
+subtasks and usage: [README.md](README.md). Runs on a host, as `root`; logs in `logs/`, run-state
+JSON in `tmp/vms/` and `tmp/apps/`.
 
 ## Tech stack
-- Bash 5 (scripts are `#!/usr/bin/bash`)
-- `jq` for JSON parsing/transform (configs + `midclt` output)
-- `midclt` (TrueNAS middleware CLI) for app/VM queries and control
-- `zfs` / `zfs_autobackup` for replication; `rsync` for app data; `ssh` for remote exec
-- Docker CLI for low-level Immich Postgres container control
-- `sendmail` for completion email
+- Bash 5 (`#!/usr/bin/bash`), `jq` (1.6 on the hosts)
+- `midclt` (TrueNAS middleware) for app/VM queries and control — verified behaviour in
+  [docs/truenas-api.md](docs/truenas-api.md)
+- `zfs` / `zfs_autobackup` for replication, `rsync` for app data and file-backed VM disks, `ssh`
+- Docker CLI for Immich's Postgres containers; `sendmail` for the result email
 
 ## External repos
-`zfs_autobackup` and `zfs-rollup` are **third-party tools** (not authored in this project) — public git repos that this project drives as external dependencies. They are expected as siblings of this project (referenced via `${SCRIPT_DIR}/../../`):
-- `../zfs_autobackup/` — ZFS snapshot/replication tool driven by dataset `autobackup:<task>` properties (see `.claude/rules/architectural_patterns.md`); contains `autobackup-venv/bin/python` and the `zfs_autobackup` module.
-- `../zfs-rollup/` — snapshot pruning/consolidation tool, invoked post-replication via `rollup.py`.
+`zfs_autobackup` and `zfs-rollup` are **third-party tools**, expected as siblings of this repo
+(`${SCRIPT_DIR}/../../`): `../zfs_autobackup/` (`autobackup-venv/bin/python -m
+zfs_autobackup.ZfsAutobackup`) and `../zfs-rollup/` (`rollup.py`). Locally cloned to
+`C:\Apps\zfs_autobackup` and `C:\Apps\zfs-rollup`, SFTP-synced to the same sibling layout. To
+verify their behaviour, read those local clones — they are what's deployed (may lag upstream).
+New host: `chmod +x bin/sync_truenas_servers` and `zfs-rollup/rollup.py` after the first push;
+`zfs_autobackup` needs its `autobackup-venv/` built there (SFTP excludes it).
 
-Locally they're cloned to `C:\Apps\zfs_autobackup` and `C:\Apps\zfs-rollup` as their own VS Code projects, SFTP-synced to the same sibling layout on the TrueNAS host. When behavior needs verifying beyond what's summarized here, read the source directly at those paths rather than guessing from usage in `lib/`. The local clones are what's actually deployed and may lag the upstream repo — that's expected; treat the local copy as the version of record for understanding current behavior, not the latest upstream.
-
-New-host deploy: SFTP doesn't set the exec bit on new files — `chmod +x bin/sync_truenas_servers` once after first push to a host. Same applies to `zfs-rollup/rollup.py`; `zfs_autobackup` also needs `autobackup-venv/` built fresh (SFTP excludes it) — see those projects' own docs.
-
-## Key directories
-- [bin/sync_truenas_servers](bin/sync_truenas_servers) — entry point. Resolves paths, sources config + all `lib/` modules, re-execs itself with `--running_in_background` as a transient `systemd-run` unit (outside sudo's `log_subcmds` tracer), dispatches subtasks, emails log.
-- [lib/](lib/) — one module per concern. All functions share globals set by the entry script + `cli.bash`.
-  - [common.bash](lib/common.bash) — `Execute_command` (local/remote/test/verbose mode multiplexer), `Background_error`, `Resolve_pool`.
-  - [cli.bash](lib/cli.bash) — `Process_command_line_options`, `Help`. Sets `TASK`, `PERFORM_*` flags, `APP_LIST`, `VM_LIST`, and the `LOCAL_SOURCE`/`REMOTE_SOURCE`/`LOCAL_TARGET`/`REMOTE_TARGET` direction vars.
-  - [rep_apps.bash](lib/rep_apps.bash) — `Perform_app_replication`, `Control_app`, `Control_app_with_checks`, `Stop_app_if_active`, `Print_app_version_mismatch`. Driven by [config/apps.json](config/apps.json). Skips (doesn't abort) an app that isn't installed on both hosts, whose upstream app versions differ, or whose `requires_target_running` target is stopped (`--start-stopped-apps` starts it for the run, cleanup stack stops it again).
-  - [rep_vms.bash](lib/rep_vms.bash) — `Extract_vm_definitions`, `Transform_vm_definition`, VM replication pipeline. Writes per-VM JSON under `tmp/vms/json/per_vm/`. Driven by [config/vm_device_mappings.json](config/vm_device_mappings.json).
-  - [rep_app_definitions.bash](lib/rep_app_definitions.bash) — `Perform_app_definition_replication` (plan 06 phase 2): extract→transform→`app.create`/`app.update` of app *definitions*, mirroring the VM pattern. Manual-only subtask (not in `all`); does not call `app.delete`; skips a RUNNING target app (`--stop-running-apps` stops it for the update, cleanup stack starts it again). Writes per-app JSON under `tmp/apps/json/per_app/`. Driven by [config/app_config_mappings.json](config/app_config_mappings.json). midclt payload shapes verified on both hosts ([plans/06-phase0-findings.md](plans/06-phase0-findings.md)); create and update proven on a throwaway app.
-  - [rep_filesystems.bash](lib/rep_filesystems.bash) — `Perform_filesystem_replication` (scopes: `all_snapshots`, `latest_snapshot_only`, `vm_latest_snapshot_only`). Discovers impacted datasets via `autobackup:<task_scope>` ZFS property.
-  - [snap_rollup.bash](lib/snap_rollup.bash) — `Perform_snapshot_rollup`. Shells out to `../../zfs-rollup/rollup.py`.
-  - [docker.bash](lib/docker.bash) — `Control_docker_containers`, `Wait_for_docker_state`.
-  - [immich_db.bash](lib/immich_db.bash) — `Backup_immich_DB` / `Restore_immich_DB` wired as `pre_action` / `post_action` in `apps.json`.
-- [config/](config/) — `apps.json` (app replication spec; an entry with only a `name` is definitions-only — `app_replication` skips it), `vm_device_mappings.json` (per-dtype path/NIC/display rewrites master↔backup), `app_config_mappings.json` (app-config rewrites master↔backup; spec in `app_divergences.md`), `config.local.bash` (untracked, provides `EMAIL_TO` + `SSH_CONFIG_FILE`), `config.example.bash` (template).
-  - `SSH_CONFIG_FILE` must point at `/mnt/<master|backup>-pool/homedir-ds/home/root/.ssh/config` — root's *second* home — `/root` sits in the appliance's boot environment and is replaced by an update, so persistent files live on a data pool instead; unencrypted on purpose, so it is reachable after a reboot before anything is unlocked. That key is what the two hosts authenticate to each other with, so `homedir-ds` is not leftover clutter even though the scripts that once lived in its `bin/` have moved to `app-ds`.
-- [tools/](tools/) — standalone diagnostics, not part of a replication run. [mountwatch.sh](tools/mountwatch.sh) instruments a sync on the *target* host for the unresolved "dataset is busy" failures (see [plans/08](plans/08-known-operational-issues.md)); start it by hand with `setsid`, and keep its log off `/tmp` (tmpfs + noexec on TrueNAS). Deployed by SFTP like `bin/` and `lib/`.
-- `logs/`, `tmp/` — runtime only (gitignored).
+## Key files
+- [bin/sync_truenas_servers](bin/sync_truenas_servers) — entry point: paths, config, host roles,
+  lock, re-exec as a `systemd-run` unit with `--running_in_background`, subtask dispatch, email.
+- [lib/](lib/) — sourced flat into one shell (shared globals):
+  - [common.bash](lib/common.bash) — `Execute_command`, `Background_error`, cleanup stack,
+    `Resolve_pool`, `Resolve_direction`.
+  - [cli.bash](lib/cli.bash) — `Process_command_line_options`, `Help` (full option matrix).
+  - [rep_app_definitions.bash](lib/rep_app_definitions.bash) — `app_definition_replication`:
+    extract → transform (`config/app_config_mappings.json`) → `app.create`/`app.update`.
+  - [rep_apps.bash](lib/rep_apps.bash) — `app_replication` (`config/apps.json`), app control
+    helpers, version-mismatch message.
+  - [immich_db.bash](lib/immich_db.bash) — `Backup_immich_DB` / `Restore_immich_DB`, Immich's
+    `pre_action` / `post_action`.
+  - [rep_vms.bash](lib/rep_vms.bash) — `vm_replication` (`config/vm_device_mappings.json`).
+  - [rep_filesystems.bash](lib/rep_filesystems.bash) — `zfs_autobackup` runs, mount handling,
+    failure diagnostics.
+  - [snap_rollup.bash](lib/snap_rollup.bash) — `zfs-rollup` on the target.
+  - [docker.bash](lib/docker.bash) — container stop/start with state waits.
+- [config/](config/) — `apps.json`, `app_config_mappings.json` (spec:
+  `app_divergences.md`), `vm_device_mappings.json`, `config.example.bash` → untracked
+  `config.local.bash` (`EMAIL_TO`, `SSH_CONFIG_FILE`).
+- [tools/mountwatch.sh](tools/mountwatch.sh) — standalone watcher for the
+  [dataset-busy investigation](docs/dataset-busy-investigation.md); not part of a run.
+- [docs/](docs/) — operations procedures, TrueNAS API behaviour, investigations.
+- [plans/](plans/) — open work only; deleted once implemented.
 
 ## Essential commands
-No build step, no test suite, no linter configured. Validation is by execution on a TrueNAS host.
+No build, no test suite. Validate with `bash -n <file>` and `shellcheck -x <file>`, then a
+`--test` run on a host (as root):
 
 ```bash
-# Syntax check a module (no project-wide check target exists)
-bash -n lib/rep_apps.bash
-
-# Dry run on a TrueNAS host (as root)
 ./bin/sync_truenas_servers --test --task=master_to_backup
-
-# Real run, single subtask / single app or VM
-./bin/sync_truenas_servers --task=master_to_backup --subtask=app_replication --app=immich
-./bin/sync_truenas_servers --task=backup_to_master --subtask=vm_replication --vm=VM1 --vm=VM2
-
-# App-definition replication (manual-only; always --test first — see plans/06-phase0-findings.md)
-./bin/sync_truenas_servers --test --task=master_to_backup --subtask=app_definition_replication --app=immich
+./bin/sync_truenas_servers --test --task=master_to_backup --subtask=app_definition_replication --app=grafana
 ```
 
-Note: the foreground wrapper always exits 0; success/failure is signaled by
-email and the log, not the exit code. Don't chain `&&` off a run.
+Run commands are given for **truenas-backup** unless asked otherwise. The run always exits 0;
+the result is in the email and the log.
 
-Deploy: VS Code SFTP extension, `watcher.autoUpload` on — saves auto-upload to the active profile's host (default `backup`). No manual sync step; never instruct one. Other host = switch profile.
+Deploy: VS Code SFTP extension, `watcher.autoUpload` on — a save uploads to the active profile's
+host (default truenas-backup). Never instruct a manual sync. Other host = switch profile.
 
-See [lib/cli.bash](lib/cli.bash) (`Help`) for the full option matrix.
-
-## Hooks
-No `.claude/settings.json` present. No Claude-affecting hooks, auto-formatters, or blocked paths configured.
+## Docs rule
+Docs describe the current state only — no history, no references to finished plans. Plans hold
+open work and are deleted when done; what stays true moves into the docs.
 
 ## Additional docs
 @.claude/rules/architectural_patterns.md

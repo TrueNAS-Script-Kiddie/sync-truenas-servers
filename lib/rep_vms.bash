@@ -43,7 +43,7 @@ function Vm_in_scope() {
 # GRACEFUL stops only, never forced — load-bearing. A forced poweroff flips .status.state
 # to STOPPED while libvirt is still tearing the domain down, which (a) would snapshot the
 # source zvol before its guest cleanly shut down, and (b) leaves an orphan libvirt domain
-# that vm.delete won't undefine, breaking the recreate on a UUID collision (see plan 09).
+# that vm.delete won't undefine, breaking the recreate on a UUID collision (docs/truenas-api.md).
 # Graceful settles fully: .state reaches STOPPED only once the domain is SHUTOFF.
 #
 # vm.stop is a JOB → wait for it to reach SUCCESS (core.get_jobs), not just for .state,
@@ -137,6 +137,8 @@ function Warn_target_vm_state() {
 # Extract VM definitions into a variable as JSON
 function Extract_vm_definitions() {
     echo "### Extracting VM definitions ###"
+
+    local SOURCE_OR_TARGET VM
 
     # Remove old jsons
     rm -f "${VM_TMP_DIR}/json/per_vm/"*.json 2>/dev/null

@@ -6,11 +6,15 @@ function Help() {
     echo "Help for ${SCRIPT_FILENAME}"
     echo
     echo -e "${SCRIPT_FILENAME} [-h] [--help]\t\t\t\tDisplays this help message."
-    echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>] [--vm=<name>*] [--stop-running-vms] [--start-stopped-apps] [--stop-running-apps]"
+    echo -e "${SCRIPT_FILENAME} [--test] --task=<task> [--subtask=<subtask>] [--app=<app>*] [--vm=<name>*] [--stop-running-vms] [--start-stopped-apps] [--stop-running-apps]"
     echo -e "\t\t\t\t\t\t\t\tPerforms the requested replication."
     echo
     echo -e "--test"
-    echo -e "\tThis option forces the script not change anything. It does stop/start containers."
+    echo -e "\tThis option forces the script not to change anything. It does stop/start apps and containers."
+    echo
+    echo -e "--app=<app>"
+    echo -e "\tThis option limits app_replication / app_definition_replication to specific apps."
+    echo -e "\tRepeat this option for each app: e.g. --app=plex --app=immich"
     echo
     echo -e "--vm=<name>"
     echo -e "\tThis option limits VM replication to specific VMs."
@@ -23,9 +27,10 @@ function Help() {
     echo -e "\tvm_replication subtask."
     echo
     echo -e "--start-stopped-apps"
-    echo -e "\tStart a stopped target app that must run to receive its data (Immich: the DB"
-    echo -e "\trestore runs inside it), and stop it again afterwards. Without this option,"
-    echo -e "\tsuch an app is skipped. Only valid with the app_replication subtask."
+    echo -e "\tStart a stopped app that must run for its data to be copied (Immich: the DB"
+    echo -e "\tdump runs inside the source app, the restore inside the target app), and stop"
+    echo -e "\tit again afterwards. Without this option, such an app is skipped. Only valid"
+    echo -e "\twith the app_replication subtask."
     echo
     echo -e "--stop-running-apps"
     echo -e "\tStop a running target app so its definition can be updated, and start it"
@@ -96,7 +101,7 @@ function Process_command_line_options() {
             ;;
         --subtask=app_definition_replication)
             # Deliberately NOT enabled by --subtask=all or the no-subtask default
-            # until it has survived supervised runs in both directions (plan 06).
+            # until it has survived supervised runs in both directions.
             # shellcheck disable=SC2034  # consumed by bin/sync_truenas_servers
             PERFORM_APP_DEF_REP="true"
             ;;
@@ -166,7 +171,7 @@ function Process_command_line_options() {
     [[ -z "${TASK}" ]] && Help 1
 
     # When no subtask is specified, then all subtasks are enabled by default
-    # (app_definition_replication stays opt-in — see plan 06 guardrails)
+    # (app_definition_replication stays opt-in)
     if [[ -z "${PERFORM_ROLLUP}" && -z "${PERFORM_APP_REP}" && -z "${PERFORM_APP_DEF_REP}" && -z "${PERFORM_VM_REP}" && -z "${PERFORM_ZFS_REP_ALL}" && -z "${PERFORM_ZFS_REP_LATEST}" ]]; then
         PERFORM_ROLLUP="true"
         PERFORM_APP_REP="true"

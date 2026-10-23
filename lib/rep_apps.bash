@@ -138,10 +138,16 @@ function Perform_app_replication() {
 
     local -a SELECTED_APP_JSON_LIST
     local -a APP_JSON_LIST
+    local SOURCE_APP_STATE
     local TARGET_APP_STATE
     local SOURCE_APP_VERSION
     local TARGET_APP_VERSION
+    local SOURCE_STARTED_BY_US
     local TARGET_STARTED_BY_US
+    local PRECONDITION_MET
+    local SIDE
+    local STATE_VAR
+    local SERVER_ID_VAR
     local SUCCEEDED=0
     local SKIPPED=0
     local APP_NAME
@@ -185,6 +191,7 @@ function Perform_app_replication() {
     for APP_JSON in "${SELECTED_APP_JSON_LIST[@]}"; do
         REMOTE_STOPPED_LIST=()
         LOCAL_STOPPED_LIST=()
+        SOURCE_STARTED_BY_US="false"
         TARGET_STARTED_BY_US="false"
 
         APP_NAME="$(jq -r '.name' <<< "${APP_JSON}")"
@@ -230,27 +237,49 @@ function Perform_app_replication() {
         Execute_command "${TARGET_LOCATION}" "test -d \"${FULL_TARGET_PATH#*:}\"" \
             || Background_error "ERROR: '${FULL_TARGET_PATH}' does not exist. Is the dataset mounted and unlocked?"
 
-        # Apps that restore into the running target (Immich DB) can't sync a
-        # stopped target — check before pre-action/stop/rsync, not after.
-        if [[ "$(jq -r '.requires_target_running // false' <<< "${APP_JSON}")" == "true" ]]; then
-            TARGET_APP_STATE="$(Execute_command "${TARGET_LOCATION}" \
+        # Hooks that run inside the app (Immich: the DB dump on the source, the restore on the
+        # target) need it RUNNING on that side. Both sides are checked before either is started,
+        # so a skip leaves nothing changed.
+        SOURCE_APP_STATE="RUNNING"
+        TARGET_APP_STATE="RUNNING"
+        [[ "$(jq -r '.requires_source_running // false' <<< "${APP_JSON}")" == "true" ]] \
+            && SOURCE_APP_STATE="$(Execute_command "${SOURCE_LOCATION}" \
+                "midclt call app.query | jq -r '.[] | select(.name==\"${APP_NAME}-${SOURCE_SERVER_ID}\") | .state'")"
+        [[ "$(jq -r '.requires_target_running // false' <<< "${APP_JSON}")" == "true" ]] \
+            && TARGET_APP_STATE="$(Execute_command "${TARGET_LOCATION}" \
                 "midclt call app.query | jq -r '.[] | select(.name==\"${APP_NAME}-${TARGET_SERVER_ID}\") | .state'")"
-            if [[ "${TARGET_APP_STATE}" =~ ^(STOPPED|CRASHED)$ && -n "${START_STOPPED_APPS}" ]]; then
-                # Register the undo BEFORE starting, so even a timed-out start still gets stopped again.
-                # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
-                Register_cleanup 'Stop_app_if_active "${APP_NAME}-${TARGET_SERVER_ID}" "${TARGET_LOCATION}"'
-                TARGET_STARTED_BY_US="true"
-                echo -n "Starting ${TARGET_LOCATION} ${APP_NAME}-${TARGET_SERVER_ID} for this run (state ${TARGET_APP_STATE}; --start-stopped-apps)."
-                Control_app "${APP_NAME}-${TARGET_SERVER_ID}" start "${TARGET_LOCATION}"
-                echo
-            elif [[ "${TARGET_APP_STATE}" != "RUNNING" ]]; then
-                echo "Replication skipped for app ${APP_NAME}: ${APP_NAME}-${TARGET_SERVER_ID} must be RUNNING on the target (its post-action restores into the running app). Current state: ${TARGET_APP_STATE}."
-                [[ "${TARGET_APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]] \
-                    && echo "  Pass --start-stopped-apps to start it for the run and stop it again afterwards."
-                echo
-                ((SKIPPED++))
-                continue
-            fi
+        PRECONDITION_MET="true"
+        for SIDE in SOURCE TARGET; do
+            STATE_VAR="${SIDE}_APP_STATE"
+            SERVER_ID_VAR="${SIDE}_SERVER_ID"
+            [[ "${!STATE_VAR}" == "RUNNING" ]] && continue
+            [[ "${!STATE_VAR}" =~ ^(STOPPED|CRASHED)$ && -n "${START_STOPPED_APPS}" ]] && continue
+            echo "Replication skipped for app ${APP_NAME}: ${APP_NAME}-${!SERVER_ID_VAR} must be RUNNING on the ${SIDE,,} (a hook runs inside it). Current state: ${!STATE_VAR}."
+            [[ "${!STATE_VAR}" =~ ^(STOPPED|CRASHED)$ ]] \
+                && echo "  Pass --start-stopped-apps to start it for the run and stop it again afterwards."
+            PRECONDITION_MET="false"
+        done
+        if [[ "${PRECONDITION_MET}" == "false" ]]; then
+            echo
+            ((SKIPPED++))
+            continue
+        fi
+        # Register each undo BEFORE starting, so even a timed-out start still gets stopped again.
+        if [[ "${SOURCE_APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
+            # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
+            Register_cleanup 'Stop_app_if_active "${APP_NAME}-${SOURCE_SERVER_ID}" "${SOURCE_LOCATION}"'
+            SOURCE_STARTED_BY_US="true"
+            echo -n "Starting ${SOURCE_LOCATION} ${APP_NAME}-${SOURCE_SERVER_ID} for this run (state ${SOURCE_APP_STATE}; --start-stopped-apps)."
+            Control_app "${APP_NAME}-${SOURCE_SERVER_ID}" start "${SOURCE_LOCATION}"
+            echo
+        fi
+        if [[ "${TARGET_APP_STATE}" =~ ^(STOPPED|CRASHED)$ ]]; then
+            # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
+            Register_cleanup 'Stop_app_if_active "${APP_NAME}-${TARGET_SERVER_ID}" "${TARGET_LOCATION}"'
+            TARGET_STARTED_BY_US="true"
+            echo -n "Starting ${TARGET_LOCATION} ${APP_NAME}-${TARGET_SERVER_ID} for this run (state ${TARGET_APP_STATE}; --start-stopped-apps)."
+            Control_app "${APP_NAME}-${TARGET_SERVER_ID}" start "${TARGET_LOCATION}"
+            echo
         fi
 
         # # Perform pre-action function from the json (for example: Backup Immich Postgres DB)
@@ -286,9 +315,15 @@ function Perform_app_replication() {
         POST_ACTION="$(jq -r '.post_action // empty' <<< "${APP_JSON}")"
         [[ -n "${POST_ACTION}" ]] && "$POST_ACTION"
 
-        # Return a target that --start-stopped-apps started to its previous (stopped) state
+        # Return apps --start-stopped-apps started to their previous (stopped) state.
+        # Target first: Unregister_cleanup pops the newest entry.
         if [[ "${TARGET_STARTED_BY_US}" == "true" ]]; then
             Stop_app_if_active "${APP_NAME}-${TARGET_SERVER_ID}" "${TARGET_LOCATION}"
+            Unregister_cleanup
+            echo
+        fi
+        if [[ "${SOURCE_STARTED_BY_US}" == "true" ]]; then
+            Stop_app_if_active "${APP_NAME}-${SOURCE_SERVER_ID}" "${SOURCE_LOCATION}"
             Unregister_cleanup
             echo
         fi

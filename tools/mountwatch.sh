@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 # tools/mountwatch.sh
 # Standalone diagnostic watcher for the "dataset is busy" zfs recv failures
-# (plans/08-known-operational-issues.md). Not part of the replication run --
+# (docs/dataset-busy-investigation.md). Not part of the replication run --
 # start it by hand on the TARGET host before a sync you want instrumented.
 #
 # Samples every dataset under ${DS_ROOT} and logs a block whenever the state

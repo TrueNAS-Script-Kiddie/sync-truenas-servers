@@ -7,46 +7,119 @@ paths:
 
 # Architectural patterns
 
-These conventions appear across multiple modules. Follow them when editing or adding code.
+Conventions across modules. Follow them when editing or adding code.
 
-## Direction model: LOCAL_* and REMOTE_* role vars
-`bin/sync_truenas_servers` derives `LOCAL_SERVER_ID` from `hostname -s` (strips `truenas-` prefix) and picks `REMOTE_SERVER_ID` as the opposite of `master`/`backup`. `lib/cli.bash::Process_command_line_options` then sets exactly **one** of `LOCAL_SOURCE`/`REMOTE_SOURCE` and exactly one of `LOCAL_TARGET`/`REMOTE_TARGET` based on `${TASK}:${LOCAL_SERVER_ID}`. Every module decides execution location by testing which of these is set — e.g. `[[ -n "${LOCAL_SOURCE}" ]] && SOURCE_LOCATION="local" || SOURCE_LOCATION="remote"`. Preserve this pattern rather than introducing a new direction variable.
+## Direction model
+`bin/sync_truenas_servers` derives `LOCAL_SERVER_ID` from `hostname -s` (strips `truenas-`) and
+`REMOTE_SERVER_ID` as the other of `master`/`backup`. `cli.bash` sets exactly **one** of
+`LOCAL_SOURCE`/`REMOTE_SOURCE` and one of `LOCAL_TARGET`/`REMOTE_TARGET` from
+`${TASK}:${LOCAL_SERVER_ID}`. `Resolve_direction` (common.bash) derives the read-only view every
+module uses: `SOURCE_LOCATION`/`TARGET_LOCATION` (`local`|`remote`) and
+`SOURCE_SERVER_ID`/`TARGET_SERVER_ID`. Use these; never re-derive direction or remove the four
+base variables.
 
 ## Local-vs-remote execution via `Execute_command`
-All commands that might run on either host go through `lib/common.bash::Execute_command <MODE> <cmd...>`. `MODE` is a substring-matched token string — `local`, `remote`, optionally combined with `verbose` and/or `test` (e.g. `local_verbose_test`). `remote` mode prefixes the command with `${REMOTE_CMD[@]}` (an `ssh -F $SSH_CONFIG_FILE truenas-${REMOTE_SERVER_ID}` array built in the entry script). `test` mode skips execution entirely. Never shell out to `ssh` directly — use `Execute_command remote` so `--test` and verbose tracing stay consistent.
+Every command that may run on either host goes through `Execute_command <MODE> <cmd>`. `MODE` is
+substring-matched: `local` or `remote`, optionally `verbose` and/or `test`
+(`local_verbose_test`). `remote` prefixes `${REMOTE_CMD[@]}` (`ssh -F $SSH_CONFIG_FILE
+truenas-<peer>`); `test` skips execution. Never call `ssh` directly. Commands are strings
+evaluated through several quoting layers — this design is load-bearing; changing it amounts to a
+rewrite.
 
 ## Pool resolution
-`Resolve_pool <server_id> [fast|normal]` in `lib/common.bash` is the single source of truth for pool names: `master` → `master-pool` (normal) or `ssdmaster-pool` (fast); `backup` → `backup-pool` for both. App and VM replication pass `fast`; filesystem replication receives the `POOL_TYPE` as its second argument. Do not hardcode pool names in new code.
+`Resolve_pool <server_id> [fast|normal]` is the only source of pool names: `master` →
+`master-pool` / `ssdmaster-pool` (fast); `backup` → `backup-pool` for both. Apps and VMs use
+`fast`. Never hardcode a pool name in code.
 
-## JSON-driven configuration, parsed with `jq`
-Replication behavior is declared in `config/apps.json` and `config/vm_device_mappings.json`. Modules `mapfile`/loop over `jq -c` output and extract fields with `jq -r '.field'`. `apps.json` entries may declare `pre_action` / `post_action` strings — these are invoked as shell function names (e.g. `Backup_immich_DB`, `Restore_immich_DB` defined in `lib/immich_db.bash`). Adding a new app-level lifecycle hook means adding a function in `lib/` and referencing it by name in `apps.json`.
+## JSON-driven configuration
+Behaviour is declared in `config/apps.json`, `config/app_config_mappings.json` and
+`config/vm_device_mappings.json`, read with `jq` (`mapfile` over `jq -c`, fields via `jq -r`).
+`apps.json` `pre_action`/`post_action` are shell function names called around the data copy — a
+new app hook is a function in `lib/` referenced by name.
 
-## Error handling: `Background_error` aborts everything
-Because the working script re-execs itself as a `systemd-run` unit while the foreground runs `tail -f`, a plain `exit 1` would only kill the background child. `Background_error "msg"` prints the message, runs the cleanup stack (below), kills the tail PID, and exits. Use it for any fatal condition; do not use bare `exit 1` inside `lib/` functions (CLI parsing in `cli.bash` is the exception — it runs before backgrounding). A **per-item** precondition that fails before anything changed (app/VM in the wrong state, not installed, version mismatch) is not fatal: print a `Replication skipped for …` line with the fix, count it, `continue`, and report the counts in the subtask's summary line — runs are started by hand and watched, so a skip is seen.
+## Errors: abort the run, skip the item
+`Background_error "msg"` prints, runs the cleanup stack, mails the failure, kills the tail and
+exits. A plain `exit` inside `lib/` would only end the background worker and orphan the tail —
+never use it there (`cli.bash` parsing runs before backgrounding and may). A **per-item**
+precondition that fails before anything changed (wrong state, not installed, version mismatch) is
+not fatal: print `Replication skipped for …` with the fix, count it, `continue`, report counts in
+the subtask summary — runs are started by hand and watched.
 
-## Restore-to-previous-state: the cleanup stack in `lib/common.bash`
-Any section that changes external state which must be undone on failure (unmounting datasets, stopping a VM) wraps itself in `Register_cleanup '<undo command>'` / `Unregister_cleanup`. Rules: the command string is **single-quoted** so its variables expand at fire time, not registration; the undo must be scoped to what *this run itself* changed (e.g. remount `UNMOUNTED_LIST`, never all of `IMPACTED_DATASETS` — some state is in its "changed" form on purpose, for reasons outside this script); pair register/unregister tightly around the risky section (fresh per loop iteration if inside a loop). Nesting works — `Run_cleanup` pops LIFO, innermost undo first. Firing paths: `Background_error` runs the stack itself *before* killing the tail (so undo output is visible live), and `bin/sync_truenas_servers` holds the single global `trap 'Run_cleanup; Kill_tail' EXIT` as safety net. Never register another `EXIT` trap anywhere — extend the stack instead. `Kill_tail` is deliberately not a stack entry: it's logging teardown that must run on every exit, success included, and always last.
+## Restore-to-previous-state: the cleanup stack
+A section whose side effects must be undone on failure wraps itself in `Register_cleanup '<undo>'`
+/ `Unregister_cleanup`. The undo is **single-quoted** (expands at fire time); it undoes only what
+*this run* changed (remount `UNMOUNTED_LIST`, never all `IMPACTED_DATASETS`); register just before
+the risky step, unregister right after the normal-path undo, fresh per loop iteration. `Run_cleanup`
+pops LIFO. `Background_error` runs the stack before killing the tail; the single
+`trap 'Run_cleanup; Kill_tail' EXIT` in `bin/` is the safety net — never add another EXIT trap.
+`Kill_tail` is not a stack entry: it runs on every exit, last.
 
-## `--test` / `TEST_MODE` discipline
-`TEST_MODE=true` must skip state-changing operations but **still** perform introspection and container stop/start (per the `--test` help text in `cli.bash::Help`). Two conventions implement this:
-1. Pass `test` as part of the `MODE` string to `Execute_command` for zfs/remote commands that must be suppressed.
-2. Wrap direct local side effects in `[[ -z "${TEST_MODE}" ]] && ...` (see `lib/immich_db.bash`).
-`rsync` uses `${TEST_MODE:+--dry-run}` in `rep_apps.bash`. `zfs_autobackup` uses `${TEST_MODE:+ --test}` in `rep_filesystems.bash`.
+## `--test` discipline
+`TEST_MODE` skips every state-changing operation but **still** runs introspection and app/container
+stop/start. Mechanisms: the `test` token in `Execute_command`'s mode; `[[ -z "${TEST_MODE}" ]] &&`
+around direct side effects; `rsync ${TEST_MODE:+--dry-run}`; `zfs_autobackup ${TEST_MODE:+--test}`;
+`rollup.py -t`. Extract/transform/diff output always runs, so `--test` shows what would change.
+One deliberate exception: VM replication still sets and clears the source zvols'
+`autobackup:<task>_vm_latest_snapshot_only` tag (`Tag_vm_disks`, `Cleanup_vm_disk_tags`) —
+`zfs_autobackup --test` selects datasets by that tag, and the run removes it again.
 
 ## Two-instance app topology
-Both servers have the same apps installed as separate instances, running at the same time whenever `truenas-backup` is on (dual-active); `truenas-backup` is usually powered off but must fully take over on failover (README "Purpose"), so it is a full peer, not a cold standby. Three consequences for app replication:
-1. **No cross-host references after a sync.** Every value that names the source host (IP, hostname, pool path, certificate) must be rewritten to the target's own — in the app definition, container config and the app's own DB — so truenas-backup never depends on truenas-master.
-2. **`app_dir_list` in `apps.json` is a contract, not a convenience.** It separates *shared content* (synced) from *per-instance identity/state* (never synced) — e.g. for Plex, `Cache`, `Logs`, `Crash Reports`, and `Preferences.xml` (server GUID, plex.tv claim) are deliberately omitted; copying them would make both servers fight over the same external identity. Do not broaden the list without checking what identity files live in the siblings.
-3. **The DB dump path is load-bearing.** Immich's Postgres lives in a separate dataset (`immich-pgdata-ds`) that is *not* in `app_dir_list`. `Backup_immich_DB` writes the dump to `immich-pgdata-ds/` then moves it into `immich-data-ds/backups/` specifically because `backups` *is* in `app_dir_list` — the dump piggybacks on the existing rsync. If you change either path, the restore on the target side will silently find no dump.
+Both hosts run the same apps as separate instances (dual-active whenever truenas-backup is on);
+truenas-backup must fully take over on failover. Consequences:
+1. **No cross-host references after a sync.** Every value naming the source host (IP, hostname,
+   pool path, certificate) is rewritten to the target's own — in the app definition, the app's
+   files and its database.
+2. **`app_dir_list` is a contract.** It separates shared content (copied) from per-instance
+   identity (never copied) — e.g. Plex's `Preferences.xml` (server GUID, claim), `Cache`, `Logs`.
+   Check sibling files for identity before broadening it. `keep_target` in
+   `app_config_mappings.json` does the same for definition values (Plex `claim_token`).
+3. **Immich's dump path is load-bearing.** Postgres lives in `immich-pgdata-ds`, not in
+   `app_dir_list`; `Backup_immich_DB` writes the dump there and moves it into
+   `immich-data-ds/backups/` because `backups` *is* copied — the dump rides the rsync. Change
+   either path and the restore silently finds nothing.
+4. **Immich's container order is the only one that works:** stop writers → start pgvecto → dump;
+   on the target stop all → wipe pgdata → start pgvecto → wait (TCP) → restore → full app stop →
+   start. Don't reorder.
 
-## Per-app naming convention
-Apps are deployed as `<app>-<server_id>` (e.g. `immich-master`, `immich-backup`). `Control_app_with_checks` builds the full name via `${APP_NAME}-${!SERVER_ID_VAR}` using indirect expansion on `LOCAL_SERVER_ID` / `REMOTE_SERVER_ID`. Container names follow `ix-<app>-<server_id>-<component>-<N>` (e.g. `ix-immich-master-pgvecto-1`; greps must not anchor at `^<app>`) and are discovered dynamically with `docker ps ... | grep -E`.
+## Naming
+Apps `<app>-<server_id>`; `Control_app_with_checks` builds it with indirect expansion on
+`LOCAL_SERVER_ID`/`REMOTE_SERVER_ID`. Containers `ix-<app>-<server_id>-<component>-<N>`, found
+with `docker ps … | grep -E` (never anchored at `^<app>`).
 
-## State-machine loops with timeouts
-Long operations poll with a counter and bounded sleep, then call `Background_error` on timeout. Examples: `Control_app` (midclt job state → `SUCCESS`, 60s), `Wait_for_docker_state` (60s), `Wait_for_pg_ready` (60s). Match this shape when adding a new wait loop rather than inventing a different retry strategy.
+## Wait loops
+Poll with a counter and bounded sleep, `Background_error` on timeout: `Control_app` (job →
+`SUCCESS`, 60 s), `Wait_for_app_job` (600 s, a create pulls images), `Control_vm` (180 s),
+`Wait_for_docker_state` (60 s), `l_Wait_for_pg_ready` (60 s). Match this shape. A readiness probe
+must use the same channel as the command that follows (`pg_isready --host=localhost` before a
+`psql --host=localhost`: during initdb bootstrap the socket answers while TCP is still down).
 
 ## ZFS replication is property-driven
-`rep_filesystems.bash` discovers what to replicate by scanning ZFS datasets for a `autobackup:<task>_<scope>` property (e.g. `autobackup:master_to_backup_latest_snapshot_only`). Datasets are opted in by setting that property in TrueNAS, not by listing them in config. Before replication it `zfs umount`s each target dataset, runs `zfs_autobackup`, then remounts only what it unmounted.
+Datasets opt in with `autobackup:<task>_<scope>=true`; discovery filters on the value. Target
+datasets are unmounted before `zfs_autobackup` and exactly those remounted after. VM zvols are
+tagged per run (`<task>_vm_latest_snapshot_only`) and untagged afterwards.
 
-## Module sourcing is flat and order-sensitive
-All `lib/*.bash` files are sourced by `bin/sync_truenas_servers` into the top-level shell. Functions and globals share a single namespace — note the uppercase global names (`SCRIPT_DIR`, `LOCAL_SERVER_ID`, `TASK`, `EXEC_DATE`, `SSH_CONFIG_FILE`, `APP_LIST`, `VM_LIST`, `TEST_MODE`, `LOG_FILE`, `DB_RESTORE_LOG`). Do not rely on local encapsulation across modules; do prefix function-local vars with `local` and use `l_`-prefixed inner functions for helpers scoped to a single outer function (pattern used in `rep_filesystems.bash` and `cli.bash`).
+## Module sourcing
+All `lib/*.bash` are sourced flat into one shell: functions and uppercase globals share one
+namespace (`SCRIPT_DIR`, `TASK`, `TEST_MODE`, `LOG_FILE`, `APP_LIST`, `VM_LIST`, …). Declare
+function-local vars `local`; name helpers scoped to one function `l_…`. `SOURCE_POOL`/`TARGET_POOL`
+reach `immich_db.bash` by dynamic scoping from `Perform_app_replication` — keep those names.
+
+## Deliberate choices — don't "fix"
+- **`zfs_autobackup`'s `*_OPTARGS` are unquoted on purpose** (each holds several flags that must
+  word-split). Quoting them breaks the command; after editing that line, check the logged command
+  still shows separate flags.
+- **`[[ … =~ " ${X} " ]]` with a quoted right side** is a literal substring match, not a regex
+  (names may contain regex characters) — ignore shellcheck SC2076 there.
+- **No `set -u` / `set -o pipefail`:** the code relies on unset-is-empty (`LOCAL_SOURCE` vs
+  `REMOTE_SOURCE`, `${TEST_MODE:+…}`) and on pipelines whose early stages may fail harmlessly.
+- **VM stops are graceful only** — a forced stop orphans the libvirt domain
+  ([docs/truenas-api.md](../../docs/truenas-api.md#vms)).
+- **Stay in bash for orchestration.** Most code drives external commands; a rewrite would be
+  validated only by destructive live runs. Pure data transforms (JSON in → JSON out) are the
+  exception: they move to Python, testable offline ([plans/app-replication.md](../../plans/app-replication.md)).
+
+## Linting
+`bash -n` and `shellcheck -x` on every touched file. The VS Code shellcheck extension needs both a
+`# shellcheck source=…` directive above each dynamic `source` and `"shellcheck.customArgs": ["-x"]`
+(in `.vscode/settings.json`). Cross-file globals carry targeted `# shellcheck disable=SC2034`
+comments with the reason.
