@@ -82,8 +82,8 @@ Important nuances, not just "go rename them":
   failover (hosts-file repoint) is only transparent for web services if both
   hosts serve on the same port.
 
-The genuinely load-bearing insight here: **demand 1 (fast failover) is not
-fully served by this repo today** — data replication assumes the target app
+The genuinely load-bearing insight here: **failover (truenas-backup fully
+taking over, README "Purpose") is not fully served by this repo today** — data replication assumes the target app
 is already installed, and installing it is the manual, error-prone step.
 `midclt call app.config` / `app.create` / `app.update` make an
 extract→transform→apply pipeline feasible, structurally identical to the

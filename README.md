@@ -1,9 +1,31 @@
 # sync_truenas_servers
 
 Bash orchestrator that replicates apps, VMs, ZFS filesystems and snapshots between two
-TrueNAS SCALE servers, in either direction. The pair is **dual-active** — both hosts have the
-same apps and VMs installed independently and may run at the same time — so this syncs
-*content* between two live installs rather than priming a cold standby.
+TrueNAS SCALE servers, in either direction.
+
+## Purpose
+
+`truenas-master` is the primary: always on, serving everything (the `data` hosts-file alias points
+to it). `truenas-backup` is mostly powered off — started, synced by hand, powered off again. Its
+jobs:
+
+1. **Backup** — a copy of truenas-master's data, with snapshot history.
+2. **Failover** — when truenas-master breaks: power on truenas-backup, repoint `data`, and every
+   app and VM works with the last synced state, with nothing to install or configure by hand.
+   So truenas-backup must be as **independent** of truenas-master as possible: after a sync,
+   nothing on truenas-backup may refer to truenas-master (IP, hostname, paths) — not in app
+   definitions, container config, nor an app's own database.
+3. **Failback** — `backup_to_master` brings changes back, with the same rules in reverse.
+4. **Occasional test bed** — trying an app change on truenas-backup first. Hence a running app on
+   truenas-backup is left alone unless `--stop-running-apps` is passed; overwriting it is a
+   per-run choice.
+
+Both hosts have the same apps and VMs installed as separate instances (`<app>-master` /
+`<app>-backup`), and whenever truenas-backup is on, both run at the same time (**dual-active**).
+So this syncs content and definitions between two installs rather than priming a
+cold standby. Only genuinely per-host values differ: IP/hostname, certificate, pool paths,
+external identities (Plex claim/GUID) and the name suffix. The goal covers **every** app on
+truenas-master, current and future.
 
 Built for one specific homelab: hostnames, pool names and dataset layout are assumptions baked
 into the code. Read [Assumed layout](#assumed-layout) before pointing it at other hardware.
@@ -20,7 +42,7 @@ One entry script dispatches four replication subtasks:
 | `snapshot_rollup` | Thins snapshots on the target with `zfs-rollup`. |
 
 A fifth subtask, `app_definition_replication`, replicates app *definitions* (`midclt app.create` /
-`app.update`, never `app.delete`): it creates a missing target app, updates a stopped one with
+`app.update`; it does not call `app.delete`): it creates a missing target app, updates a stopped one with
 the same catalog version, and leaves a running one alone (`--stop-running-apps` stops it for the
 update and starts it again). It is **manual-only**; create and
 update are proven on a throwaway app, not yet on Plex/Immich — see

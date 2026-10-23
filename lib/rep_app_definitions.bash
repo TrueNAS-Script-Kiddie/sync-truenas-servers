@@ -3,9 +3,9 @@
 # TrueNAS App-definition replication (plan 06 phase 2): extract → transform → create/update.
 #
 # Guardrails (plans/06-app-definition-replication.md):
-#   - NEVER calls app.delete.
+#   - Does not call app.delete (when it may: plan 06 guardrails).
 #   - A RUNNING (or otherwise non-STOPPED/CRASHED) target app is skipped with a loud
-#     warning — it may be a test-in-progress and must never be clobbered. Opt-in
+#     warning — it may be a test-in-progress. Opt-in
 #     --stop-running-apps stops a RUNNING one for the update and starts it again.
 #   - An update is skipped when the catalog versions differ (app.update keeps the target's version).
 #   - Manual-only subtask: not part of --subtask=all or the no-subtask default.

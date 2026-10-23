@@ -16,7 +16,8 @@
 > settle together with the loki/promtail/syslog-ng row.
 > Phase 3 not started.
 
-**Goal:** close the real gap in demand 1 (fast failover). Today
+**Goal:** close the remaining gap for failover (truenas-backup fully taking
+over from a broken truenas-master — README "Purpose"). Today
 `app_replication` syncs *data* into an app that must already be installed on
 the target; the app **definition** is the one manual, error-prone step left.
 This plan mirrors the proven VM pattern (`Extract_vm_definitions` →
@@ -49,14 +50,17 @@ the two in `apps.json` today. Each row stays until it works.
 
 ## Non-negotiable guardrails (in addition to the global ones)
 
-- **The pipeline must NEVER call `app.delete`.** `app.delete` has options that
-  can remove ix_volumes (data loss). Semantics are strictly: create if
-  missing, update if present-and-stopped, **skip with a loud warning if the
-  target app is RUNNING** — a running target instance may be a
-  test-in-progress (demand 2) and must never be clobbered by a sync. Opt-in
-  `--stop-running-apps` overrides this per run (stop, update, start again);
-  kept separate from `--start-stopped-apps` because stopping a live app is
-  the riskier choice and must be made on purpose.
+- **`app.delete` only as a deliberate method, never with ix-volume removal.**
+  `app.delete` can also delete the app's ix-volumes (storage TrueNAS keeps in
+  its own `ix-apps` dataset) — data loss. Host-path data is not touched by it.
+  Delete-and-recreate is allowed where it is the cleaner method, only for apps
+  whose data lives in host paths, and `--test` must show it. Not used yet;
+  verify `app.delete`'s parameters and which apps use ix-volumes on both hosts
+  before the first use.
+- **A RUNNING target app is skipped with a loud warning by default** — it may
+  be a test on truenas-backup. `--stop-running-apps` overwrites it for that run
+  (stop, update, start again); kept separate from `--start-stopped-apps`
+  because stopping a running app must be chosen on purpose.
 - **Never transform or copy external-identity values** (Plex claim/GUID
   territory, anything registering with a third-party service). These stay
   per-instance, exactly like `app_dir_list` already protects their files.
@@ -196,8 +200,8 @@ the phase-2 pipeline, which makes each migration double as a failover drill:
    the suffixed app in the UI (double-check the delete dialog leaves host-path
    datasets and, if applicable, ix_volumes alone) → recreate as the bare name
    via the pipeline (name override: transform target name = bare name) →
-   run data replication + DB restore → test the app end-to-end (this IS the
-   demand-1 drill).
+   run data replication + DB restore → test the app end-to-end (this IS a
+   failover drill).
 3. Same for master (recreate from backup's now-canonical definition,
    direction `backup_to_master`).
 4. Flip the app's `per_server_name_suffix` to false. When all apps are
