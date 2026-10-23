@@ -5,7 +5,8 @@ Bash orchestrator replicating apps, VMs, ZFS filesystems and snapshots between t
 hosts. `truenas-master` is the always-on primary; `truenas-backup` is mostly powered off and must
 be able to fully take over (failover, independent of truenas-master) and hand back (failback).
 Both hosts run the same apps/VMs as separate instances (dual-active whenever truenas-backup is
-on), so replication syncs content and definitions, rewriting every per-host value. Purpose,
+on), so replication syncs content and definitions, rewriting every per-host value. Exception:
+a VM is an exact twin (same UUID and MAC), so only one copy may run at a time. Purpose,
 subtasks and usage: [README.md](README.md). Runs on a host, as `root`; logs in `logs/`, run-state
 JSON in `tmp/vms/` and `tmp/apps/`.
 

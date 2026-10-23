@@ -28,6 +28,10 @@ Only genuinely per-host values differ: IP/hostname, certificate, pool paths, ext
 hosts, so repointing `data` is transparent. The goal covers **every** app on truenas-master,
 current and future; [plans/app-replication.md](plans/app-replication.md) tracks the way there.
 
+VMs are the exception: each is an exact twin (same UUID and MAC on both hosts), so failover is
+transparent but only one copy may run at a time. A per-VM choice to give truenas-backup its own
+MAC is in [plans/backlog.md](plans/backlog.md).
+
 Built for one specific homelab: hostnames, pool names and dataset layout are assumptions baked
 into the code. Read [Assumed layout](#assumed-layout) before pointing it at other hardware.
 
