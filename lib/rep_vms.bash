@@ -188,176 +188,20 @@ function Extract_vm_definitions() {
 # Tasks per VMs individually #
 ##############################
 
-# Transform a VM definition from the source host into a destination‑ready definition
-# using vm_device_mappings.json
-#
-# Usage: Transform_vm_definition <SOURCE_SERVER_ID> <TARGET_SERVER_ID>
+# Transform a VM definition from the source host into a destination-ready definition
+# using vm_device_mappings.json (lib/transform.py), printing each rewritten attribute
 function Transform_vm_definition() {
     local MAP_FILE="${SCRIPT_DIR}/../config/vm_device_mappings.json"
-    local VM_DECISION_LOG
-    local VALID
 
     echo "Transforming source VM definition into destination VM definition..."
 
-    # 0) Sanity: mapping file
     [[ -f "${MAP_FILE}" ]] || Background_error "ERROR: mapping file not found: ${MAP_FILE}"
 
-    # 1) Store decision log for debug-on-error
-    VM_DECISION_LOG=$(
-        jq -r --arg SOURCE_SERVER_ID "${SOURCE_SERVER_ID}" --arg TARGET_SERVER_ID "${TARGET_SERVER_ID}" --argfile MAP_FILE "${MAP_FILE}" '
-        def DEVS: (.devices // (.[0].devices));
-        DEVS[]
-        | . as $DEVICE
-        | $DEVICE.attributes.dtype as $DTYPE
-        | ($MAP_FILE[$DTYPE] // null) as $DEVICE_MAP
-        | "DEC: DTYPE=" + ($DTYPE // "null")
-            + " MAP_PRESENT=" + (((($DEVICE_MAP|type) != "null"))|tostring)
-        ,
-        ( if ($DEVICE_MAP|type) != "null" then
-            $DEVICE_MAP
-            | to_entries[]
-            | select(.key != "_doc")
-            | .key as $ATTR
-            | ($DEVICE.attributes[$ATTR] // "" ) as $SOURCE_VALUE
-            | ($SOURCE_VALUE | tostring) as $SOURCE_VALUES
-            | ( first(
-                  .value[]
-                  | . as $RULE_MATCH
-                  | ( ($RULE_MATCH.scope == null) or ($SOURCE_VALUES | contains($RULE_MATCH.scope)) ) as $SCOPE_MATCH
-                  | ( $SOURCE_VALUES == ($RULE_MATCH[$SOURCE_SERVER_ID] | tostring) ) as $SOURCE_EQUALS_RULE
-                  | ( $SOURCE_VALUES | contains($RULE_MATCH[$SOURCE_SERVER_ID] | tostring) ) as $SOURCE_CONTAINS_RULE
-                  | select( $SCOPE_MATCH and ( $SOURCE_EQUALS_RULE or $SOURCE_CONTAINS_RULE ) )
-              ) ) as $RULE_MATCH
-            | if $RULE_MATCH != null then
-                "  dtype=" + $DTYPE
-                + " attribute=" + $ATTR
-                + " source_value=" + ($SOURCE_VALUE|tostring)
-                + " source_rule=" + (($RULE_MATCH[$SOURCE_SERVER_ID] // "null")|tostring)
-                + " target_rule=" + (($RULE_MATCH[$TARGET_SERVER_ID] // "null")|tostring)
-                + " scope=" + (($RULE_MATCH.scope // "null")|tostring)
-                + " | apply=true"
-              else empty end
-          else empty end )
-        ' "${SOURCE_VM_JSON_FILE}"
-    )
+    python3 "${SCRIPT_DIR}/../lib/transform.py" vm-definition --map "${MAP_FILE}" \
+        --source "${SOURCE_SERVER_ID}" --target "${TARGET_SERVER_ID}" \
+        "${SOURCE_VM_JSON_FILE}" "${TRANSFORMED_VM_JSON_FILE}" \
+        || Background_error "ERROR transforming ${SOURCE_VM_JSON_FILE}"
 
-    # 2) Print mappings that will be done in 3) + warn about unmapped DISK paths
-    jq -r \
-    --arg SOURCE_SERVER_ID "${SOURCE_SERVER_ID}" \
-    --arg TARGET_SERVER_ID "${TARGET_SERVER_ID}" \
-    --argfile MAP_FILE "${MAP_FILE}" '
-    def DEVICES: (.devices // (.[0].devices));
-    def SCOPES: ($MAP_FILE.DISK.path | map(.scope) | map(select(. != null)));
-
-    DEVICES[]
-    | . as $DEVICE
-    | $DEVICE.attributes.dtype as $DTYPE
-    | ($MAP_FILE[$DTYPE] // null) as $DEVICE_MAP
-    | if ($DEVICE_MAP|type) == "null" then
-        # no mapping rules for this dtype
-        if $DTYPE == "DISK" then
-            # warn if path not covered by any scope
-            ($DEVICE.attributes.path // "" ) as $DISK_PATH
-            | if (SCOPES | any($DISK_PATH | contains(.))) then empty
-              else "WARNING\tpath\t\($DISK_PATH) → (no mapping rule)"
-              end
-        else empty end
-      else
-        (
-            $DEVICE_MAP
-            | to_entries[]
-            | select(.key != "_doc")
-            | .key as $ATTR
-            | ($DEVICE.attributes[$ATTR] // "" ) as $SOURCE_VALUE
-            | ($SOURCE_VALUE | tostring) as $SOURCE_STR
-            | ( first(
-                  .value[]
-                  | . as $RULE_MATCH
-                  | (($RULE_MATCH.scope == null) or ($SOURCE_STR | contains($RULE_MATCH.scope))) as $SCOPE_MATCH
-                  | ($SOURCE_STR == ($RULE_MATCH[$SOURCE_SERVER_ID]|tostring)) as $EQUALS
-                  | ($SOURCE_STR | contains($RULE_MATCH[$SOURCE_SERVER_ID]|tostring)) as $CONTAINS
-                  | select($SCOPE_MATCH and ($EQUALS or $CONTAINS))
-              ) ) as $RULE_MATCH
-            | if $RULE_MATCH != null then
-                if ($SOURCE_STR == ($RULE_MATCH[$SOURCE_SERVER_ID]|tostring)) then
-                  "\($DTYPE)\t\($ATTR)\t\($SOURCE_VALUE) → \($RULE_MATCH[$TARGET_SERVER_ID])"
-                elif ($SOURCE_STR | contains($RULE_MATCH[$SOURCE_SERVER_ID]|tostring)) then
-                  "\($DTYPE)\t\($ATTR)\t\($SOURCE_VALUE) → \($SOURCE_STR | sub(($RULE_MATCH[$SOURCE_SERVER_ID]|tostring); ($RULE_MATCH[$TARGET_SERVER_ID]|tostring)))"
-                else empty end
-              else empty end
-        )
-      end
-    ' "${SOURCE_VM_JSON_FILE}" | column -t -s $'\t' | sed 's/^/  /'
-
-    # 3) Apply JSON mappings and write to $TRANSFORMED_VM_JSON_FILE
-    jq --arg SOURCE_SERVER_ID "${SOURCE_SERVER_ID}" --arg TARGET_SERVER_ID "${TARGET_SERVER_ID}" --argfile MAP_FILE "${MAP_FILE}" '
-      def apply_device($DEVICE):
-        $DEVICE
-        | .attributes.dtype as $DTYPE
-        | ($MAP_FILE[$DTYPE] // null) as $DEVICE_MAP
-        | if ($DEVICE_MAP|type) == "null" then .
-          else
-            reduce ($DEVICE_MAP | to_entries[] | select(.key != "_doc")) as $DEVICE_ENTRY (.;
-              (.attributes[$DEVICE_ENTRY.key] // "" ) as $OLD_VALUE
-              | ($OLD_VALUE | tostring) as $OLD_STR
-              | ( first(
-                    $DEVICE_ENTRY.value[]
-                    | . as $RULE_MATCH
-                    | ($RULE_MATCH[$SOURCE_SERVER_ID]|tostring) as $SRC_RULE
-                    | (($RULE_MATCH.scope == null) or ($OLD_STR | contains($RULE_MATCH.scope))) as $SCOPE_OK
-                    | ($OLD_STR == $SRC_RULE) as $EQUALS
-                    | ($OLD_STR | contains($SRC_RULE)) as $CONTAINS
-                    | select($SCOPE_OK and ($EQUALS or $CONTAINS))
-                ) ) as $MATCH
-              | if $MATCH != null then
-                  ($MATCH[$SOURCE_SERVER_ID]|tostring) as $SRC_RULE
-                  | if ($OLD_STR == $SRC_RULE) then
-                      .attributes[$DEVICE_ENTRY.key] = $MATCH[$TARGET_SERVER_ID]
-                    elif ($OLD_STR | contains($SRC_RULE)) then
-                      .attributes[$DEVICE_ENTRY.key] = ($OLD_STR | sub($SRC_RULE; ($MATCH[$TARGET_SERVER_ID]|tostring)))
-                    else .
-                    end
-                else .
-                end
-            )
-          end;
-
-      if .devices then
-        .devices |= [ .[] | (apply_device(.) // .) ]
-      elif (type == "array") and (.[0].devices) then
-        .[0].devices |= [ .[0].devices[] | (apply_device(.) // .) ]
-      else
-        .
-      end
-    ' "${SOURCE_VM_JSON_FILE}" > "${TRANSFORMED_VM_JSON_FILE}"
-
-    if [[ $? -ne 0 ]]; then
-        echo
-        echo "VM Decision Log:"
-        printf '%s\n' "${VM_DECISION_LOG}"
-        echo
-        Background_error "ERROR transforming ${SOURCE_VM_JSON_FILE}"
-    fi
-
-    # 5) Validation: prove devices are objects (not null) and dtype exists
-    VALID=$(jq -r '
-      def devs: (.devices // (.[0].devices));
-      if devs then
-        (devs | map(type) | all(. == "object")) and
-        (devs | all(.attributes and (.attributes.dtype != null)))
-      else
-        false
-      end
-    ' "${TRANSFORMED_VM_JSON_FILE}")
-
-    if [[ "${VALID}" != "true" ]]; then
-      echo
-      cat "${TRANSFORMED_VM_JSON_FILE}"
-      echo
-      Background_error "ERROR: Transformed JSON failed validation (null/non-object devices)."
-    fi
-
-    # 6) Final: publish transformed/destination JSON file
     echo "  truenas-${LOCAL_SERVER_ID} - Transformed source json into ${TRANSFORMED_VM_JSON_FILE}"
     echo
 }
@@ -859,7 +703,7 @@ function Perform_vm_replication() {
             TARGET_WAS_RUNNING="true"
         fi
 
-        Transform_vm_definition "${SOURCE_SERVER_ID}" "${TARGET_SERVER_ID}"
+        Transform_vm_definition
         Cleanup_vm_disk_tags "${SOURCE_LOCATION}"
         Tag_vm_disks "${SOURCE_LOCATION}" "${VM}"
 

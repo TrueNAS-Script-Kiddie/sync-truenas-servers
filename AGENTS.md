@@ -12,6 +12,7 @@ JSON in `tmp/vms/` and `tmp/apps/`.
 
 ## Tech stack
 - Bash 5 (`#!/usr/bin/bash`), `jq` (1.6 on the hosts)
+- Python 3.11 (the hosts' system `python3`, stdlib only) for the source → target transforms
 - `midclt` (TrueNAS middleware) for app/VM queries and control — verified behaviour in
   [docs/truenas-api.md](docs/truenas-api.md)
 - `zfs` / `zfs_autobackup` for replication, `rsync` for app data and file-backed VM disks, `ssh`
@@ -44,6 +45,8 @@ New host: `chmod +x bin/sync_truenas_servers` and `zfs-rollup/rollup.py` after t
     failure diagnostics.
   - [snap_rollup.bash](lib/snap_rollup.bash) — `zfs-rollup` on the target.
   - [docker.bash](lib/docker.bash) — container stop/start with state waits.
+- [lib/transform.py](lib/transform.py) — the transforms (VM and app definitions), called as a
+  script; tests in [tests/](tests/).
 - [config/](config/) — `apps.json`, `app_config_mappings.json` (spec:
   `app_divergences.md`), `vm_device_mappings.json`, `config.example.bash` → untracked
   `config.local.bash` (`EMAIL_TO`, `SSH_CONFIG_FILE`).
@@ -53,8 +56,9 @@ New host: `chmod +x bin/sync_truenas_servers` and `zfs-rollup/rollup.py` after t
 - [plans/](plans/) — open work only; deleted once implemented.
 
 ## Essential commands
-No build, no test suite. Validate with `bash -n <file>` and `shellcheck -x <file>`, then a
-`--test` run on a host (as root):
+No build. Validate with `bash -n <file>` and `shellcheck -x <file>`; the transforms offline
+with `python -B -m unittest discover -s tests` (`-B`: no `__pycache__` for the SFTP watcher to
+upload). Then a `--test` run on a host (as root):
 
 ```bash
 ./bin/sync_truenas_servers --test --task=master_to_backup

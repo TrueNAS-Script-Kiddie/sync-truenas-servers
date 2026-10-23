@@ -179,4 +179,5 @@ Hardcoded or derived, not configurable:
 - **Host references inside app data aren't rewritten yet** (grafana's Loki data source, forgejo's
   `app.ini`, syslog-ng/promtail config) — [plans/app-replication.md](plans/app-replication.md).
 
-No test suite; validation is `bash -n`, `shellcheck -x` and `--test` runs against the real servers.
+Validation is `bash -n`, `shellcheck -x`, offline unit tests of the transforms
+([tests/](tests/)) and `--test` runs against the real servers.

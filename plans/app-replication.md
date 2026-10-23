@@ -40,38 +40,31 @@ Decisions taken:
 
 ## Steps
 
-1. **Transform engine in Python.** One stdlib-only script for all transforms — app definition,
-   config files, SQLite — run on the hosts' system `python3`, testable offline on Windows against
-   saved JSON. Port the VM transform (`Transform_vm_definition`, ~170 lines of jq) onto it too,
-   proving equivalence by diffing its output against the jq version on real per-VM JSON in both
-   directions before switching. The port also retires jq's `--argfile`, deprecated since jq 1.7.
-   Prerequisites: jq on Windows (`scoop install jq`, like shellcheck) to run the jq side offline;
-   backup→master samples in the gitignored `config-mapping-examples/` (it holds master→backup
-   only) — copy them from a `--test --task=backup_to_master` run's `tmp/`.
-2. **Config redesign.** One readable config covering all three layers per app, with consistent
+1. **Config redesign.** One readable config covering all three layers per app, with consistent
    names — including the hook points (today `pre_action`/`post_action`; a rewrite between copy
    and start needs a third, so name them by *when* they run). Replaces `apps.json` +
    `app_config_mappings.json` or restructures them; decided in this step.
-3. **Rewrite inside data** — files and SQLite on the target while the app is stopped, after the
-   copy and before the start. `--test` prints every change.
-4. **Image-digest check** (data and definition replication): skip an app whose running images
+2. **Rewrite inside data** — files and SQLite on the target while the app is stopped, after the
+   copy and before the start, as new subcommands of `lib/transform.py`. `--test` prints every
+   change.
+3. **Image-digest check** (data and definition replication): skip an app whose running images
    differ between the hosts. Needed for `:latest` apps, and for every app whose database files
    are copied directly — the current check compares only the upstream app version, which can
    match while the Postgres images differ.
-5. **Create prerequisites:** before `app.create`, check the target's host paths exist; if not,
+4. **Create prerequisites:** before `app.create`, check the target's host paths exist; if not,
    skip with the exact GUI steps ([docs/operations.md](../docs/operations.md#preparing-truenas-backup-for-a-new-app)).
    Never create datasets from the script.
-6. **`ix-app` and custom apps:** verify their `app.config` / compose payloads on a live host,
+5. **`ix-app` and custom apps:** verify their `app.config` / compose payloads on a live host,
    then support them (hermes-agent is the custom-app test case until it is replaced by the
    official TrueNAS app).
-7. **Roll out per app** — loki/promtail/syslog-ng, forgejo, firefly-iii, hermes-agent; plex's
+6. **Roll out per app** — loki/promtail/syslog-ng, forgejo, firefly-iii, hermes-agent; plex's
    first real definition run. Forgejo's and firefly-iii's Postgres: copy the data directory
-   with the app stopped on both hosts, no dump — only when step 4 confirms the identical
+   with the app stopped on both hosts, no dump — only when step 3 confirms the identical
    Postgres image on both (same Postgres major and glibc, so no collation mismatch); otherwise
    skip the app. Before each app's first run, check its `--test` diff for unmasked secrets.
-8. **Include `app_definition_replication` in `--subtask=all`** once it has survived supervised
+7. **Include `app_definition_replication` in `--subtask=all`** once it has survived supervised
    runs in both directions.
-9. **Name convergence** — same bare app name (`immich`) on both hosts, suffix logic removed.
+8. **Name convergence** — same bare app name (`immich`) on both hosts, suffix logic removed.
    Simplifies code and config (the `-master`/`-backup` rewrite disappears). TrueNAS can't rename
    an app, so per app: a transition flag (e.g. `per_server_name_suffix`) lets apps migrate one at
    a time; on truenas-backup first, delete the suffixed app (host-path data stays) and recreate it

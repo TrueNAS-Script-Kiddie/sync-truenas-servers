@@ -6,7 +6,7 @@
     "value_overrides: for any object key matching 'key' whose value equals the source side exactly, set the target side. For non-string per-host values (certificate IDs).",
     "keep_target: the value at 'path' is never taken from the source; the target keeps its own, or gets 'default' when it has none (app not installed yet). For per-instance identity (Plex claim token). Applied last.",
     "Rules with a null master or backup side are ignored (not yet configured).",
-    "The <app>-master <-> <app>-backup name rewrite is NOT configured here: it is the naming convention, built into Transform_app_definition."
+    "The <app>-master <-> <app>-backup name rewrite is NOT configured here: it is the naming convention, built into lib/transform.py."
   ],
   "string_rewrites": {
     "rules": [

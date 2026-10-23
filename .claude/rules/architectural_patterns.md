@@ -121,7 +121,7 @@ reach `immich_db.bash` by dynamic scoping from `Perform_app_replication` — kee
   otherwise re-defines the deleted domain ([docs/truenas-api.md](../../docs/truenas-api.md#vms)).
 - **Stay in bash for orchestration.** Most code drives external commands; a rewrite would be
   validated only by destructive live runs. Pure data transforms (JSON in → JSON out) are the
-  exception: they move to Python, testable offline ([plans/app-replication.md](../../plans/app-replication.md)).
+  exception: they live in `lib/transform.py`, unit-tested offline in `tests/`.
 
 ## Linting
 `bash -n` and `shellcheck -x` on every touched file. The VS Code shellcheck extension needs both a
