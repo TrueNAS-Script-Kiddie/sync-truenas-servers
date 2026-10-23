@@ -1,0 +1,7 @@
+Verified on truenas-backup (Python 3.11.9, live midclt output):
+- app_definition_replication --test: plex, immich, grafana transformed by lib/transform.py;
+  rewrites as expected, no target config changes to push.
+- vm_replication (real run): FedoraBC (4 rewrites) and FedoraF (2) recreated on truenas-backup
+  from the Python output, all devices added.
+- Read-only on the host: transform.py output on FedoraF matched the jq 1.6 output there.
+The jq "whole device unchanged" edge case does not occur in real VMs.
