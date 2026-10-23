@@ -48,12 +48,6 @@ non-zero aborts the whole run. Treat 1–254 as a partial failure and let the re
 (rollup, later scopes) run. Limits the damage of [dataset busy](../docs/dataset-busy-investigation.md),
 doesn't address its cause.
 
-## `Backup_immich_DB` dumps without waiting for Postgres
-
-It starts the `pgvecto` container and runs `pg_dumpall` straight away. Low risk (existing
-cluster, no bootstrap phase; `pg_dumpall` uses the socket), but "container running" ≠ "Postgres
-ready". Add a socket-side readiness wait like `Restore_immich_DB`'s.
-
 ## `midclt call -job` instead of polling (optional)
 
 `midclt call -job app.stop <name>` blocks until the job ends and exits non-zero on failure, which

@@ -89,8 +89,8 @@ with `docker ps … | grep -E` (never anchored at `^<app>`).
 ## Wait loops
 Poll with a counter and bounded sleep, `Background_error` on timeout: `Control_app` (job →
 `SUCCESS`, 60 s), `Wait_for_app_job` (600 s, a create pulls images), `Control_vm` (180 s),
-`Wait_for_docker_state` (60 s), `l_Wait_for_pg_ready` (60 s). Match this shape. A readiness probe
-must use the same channel as the command that follows (`pg_isready --host=localhost` before a
+`Wait_for_docker_state` (60 s), `Wait_for_pg_ready` (60 s). Match this shape. A readiness probe
+must use the same channel as the command that follows (`Wait_for_pg_ready … tcp` before a
 `psql --host=localhost`: during initdb bootstrap the socket answers while TCP is still down).
 
 ## ZFS replication is property-driven

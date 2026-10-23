@@ -10,6 +10,41 @@ function Restart_source_immich() {
     Control_app "immich-${SOURCE_SERVER_ID}" start "${SOURCE_LOCATION}"
 }
 
+# Wait until Postgres in a container accepts connections, probed over the CHANNEL the next command
+# uses: 'socket' (pg_dumpall) or 'tcp' (psql --host=localhost). During initdb bootstrap the socket
+# answers (listen_addresses='') while TCP is still down, so a socket probe can't vouch for TCP.
+# Usage: Wait_for_pg_ready <LOCATION> <CONTAINER_NAME> <socket|tcp>
+function Wait_for_pg_ready() {
+    local LOCATION="$1"
+    local CONTAINER_NAME="$2"
+    local CHANNEL="$3"
+    local HOST_ARG=""
+    local START_TIME
+    local MAX_TIMEOUT=60
+    local PG_READY_OUTPUT
+    local CURRENT_TIME
+    local ELAPSED_TIME
+
+    [[ "${CHANNEL}" == "tcp" ]] && HOST_ARG=" --host=localhost"
+    START_TIME="$(date +%s)"
+    echo -n "Waiting for PostgreSQL in container ${CONTAINER_NAME} to be started completely"
+    while true; do
+        PG_READY_OUTPUT=$(Execute_command "${LOCATION}" "docker exec -i \"${CONTAINER_NAME}\" bash -c 'pg_isready${HOST_ARG}'")
+        if [[ "$PG_READY_OUTPUT" == *"accepting connections"* ]]; then
+            echo " Start complete."
+            break
+        fi
+        echo -n "."
+        CURRENT_TIME="$(date +%s)"
+        ELAPSED_TIME="$((CURRENT_TIME - START_TIME))"
+        if [[ "${ELAPSED_TIME}" -ge "${MAX_TIMEOUT}" ]]; then
+            echo " Timeout. Current state is ${PG_READY_OUTPUT}."
+            Background_error "ERROR: Timeout waiting for PostgreSQL in container ${CONTAINER_NAME} to be ready. Current status: ${PG_READY_OUTPUT}."
+        fi
+        sleep 5
+    done
+}
+
 function Backup_immich_DB() {
     echo "### Making a backup of the Immich Postgres DB ###"
     echo
@@ -34,6 +69,9 @@ function Backup_immich_DB() {
     # Start the required container
     Control_docker_containers "${SOURCE_LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
 
+    # pg_dumpall connects over the socket
+    Wait_for_pg_ready "${SOURCE_LOCATION}" "${CONTAINERS_TO_START[0]}" socket
+
     # Backup the Postgres DB
     echo "Making a backup of the Immich DB to /mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-pgdata-ds/${EXEC_DATE}_immich_backup.dump.sql.gz and moving it from immich-pgdata-ds to immich-data-ds/backups"
     echo "Executing on TrueNAS-${SOURCE_SERVER_ID^}: docker exec -i \"${CONTAINERS_TO_START[0]}\" bash -c 'pg_dumpall --clean --if-exists --username=immich | gzip > \"/var/lib/postgresql/${EXEC_DATE}_immich_backup.dump.sql.gz\"'${TEST_MODE:+" (Not done because of '--test' usage!)"}"
@@ -55,35 +93,6 @@ function Backup_immich_DB() {
 }
 
 function Restore_immich_DB() {
-    function l_Wait_for_pg_ready() {
-        local CONTAINER_NAME="$1"
-        local START_TIME="$(date +%s)"
-        local MAX_TIMEOUT=60
-        local PG_READY_OUTPUT
-        local CURRENT_TIME
-        local ELAPSED_TIME
-
-        echo -n "Waiting for PostgreSQL in container ${CONTAINER_NAME} to be started completely"
-        while true; do
-        # Probe over TCP (--host=localhost), the same channel the restore's psql uses.
-        # A bare pg_isready checks the Unix socket, which the initdb-bootstrap server
-        # (listen_addresses='') answers before the real TCP server is up -> false ready.
-        PG_READY_OUTPUT=$(Execute_command "${TARGET_LOCATION}" "docker exec -i \"${CONTAINER_NAME}\" bash -c 'pg_isready --host=localhost'")
-        if [[ "$PG_READY_OUTPUT" == *"accepting connections"* ]]; then
-            echo " Start complete."
-            break
-        fi
-        echo -n "."
-        CURRENT_TIME="$(date +%s)"
-        ELAPSED_TIME="$((CURRENT_TIME - START_TIME))"
-        if [[ "${ELAPSED_TIME}" -ge "${MAX_TIMEOUT}" ]]; then
-            echo " Timeout. Current state is ${PG_READY_OUTPUT}."
-            Background_error "ERROR: Timeout waiting for PostgreSQL in container ${CONTAINER_NAME} to be ready. Current status: ${PG_READY_OUTPUT}."
-        fi
-        sleep 5
-        done
-    }
-
     echo "### Restoring the Immich Postgres DB from backup ###"
     echo
 
@@ -105,7 +114,8 @@ function Restore_immich_DB() {
     # Start Postgres DB
     Control_docker_containers "${TARGET_LOCATION}" "start" "${CONTAINERS_TO_START[@]}"
 
-    l_Wait_for_pg_ready "${CONTAINERS_TO_START[0]}"
+    # The restore's psql connects over TCP (--host=localhost)
+    Wait_for_pg_ready "${TARGET_LOCATION}" "${CONTAINERS_TO_START[0]}" tcp
 
     # Restore Postgres DB from backup
     echo "Restoring of the Immich DB from /mnt/${TARGET_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/${EXEC_DATE}_immich_backup.dump.sql.gz"
