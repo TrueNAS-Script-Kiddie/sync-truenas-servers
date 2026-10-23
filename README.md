@@ -176,8 +176,6 @@ Hardcoded or derived, not configurable:
 
 - **Intermittent `dataset is busy`** during ZFS receive — cause unknown; diagnostics fire on
   failure. [docs/dataset-busy-investigation.md](docs/dataset-busy-investigation.md).
-- **VM UUID collision** on the target's delete → recreate under `--stop-running-vms` —
-  [plans/backlog.md](plans/backlog.md), recovery in [docs/operations.md](docs/operations.md#vm-orphan-libvirt-domain).
 - **Host references inside app data aren't rewritten yet** (grafana's Loki data source, forgejo's
   `app.ini`, syslog-ng/promtail config) — [plans/app-replication.md](plans/app-replication.md).
 

@@ -6,6 +6,10 @@
 VM_TMP_DIR="${SCRIPT_DIR}/../tmp/vms"
 mkdir -p "${VM_TMP_DIR}/json/per_vm"
 
+# TrueNAS's own libvirt sockets (the default libvirtd.socket is masked)
+LIBVIRT_URI='qemu+unix:///system?socket=/run/truenas_libvirt/libvirt-sock'
+LIBVIRT_RO_URI='qemu+unix:///system?socket=/run/truenas_libvirt/libvirt-sock-ro'
+
 declare SOURCE_ALL_VM_JSON
 declare TARGET_ALL_VM_JSON
 declare -a SOURCE_EXTRACTED_VM_LIST=()
@@ -41,10 +45,9 @@ function Vm_in_scope() {
 # Stop or start a VM by id, waiting until the operation is FULLY complete.
 #
 # GRACEFUL stops only, never forced — load-bearing. A forced poweroff flips .status.state
-# to STOPPED while libvirt is still tearing the domain down, which (a) would snapshot the
-# source zvol before its guest cleanly shut down, and (b) leaves an orphan libvirt domain
-# that vm.delete won't undefine, breaking the recreate on a UUID collision (docs/truenas-api.md).
-# Graceful settles fully: .state reaches STOPPED only once the domain is SHUTOFF.
+# to STOPPED while libvirt is still tearing the domain down, which would snapshot the source
+# zvol before its guest cleanly shut down. Graceful settles fully: .state reaches STOPPED only
+# once the domain is SHUTOFF.
 #
 # vm.stop is a JOB → wait for it to reach SUCCESS (core.get_jobs), not just for .state,
 # then confirm STOPPED (a graceful job can 'succeed' while a still-booting/unresponsive
@@ -463,6 +466,36 @@ function Delete_vm_on_destination() {
     fi
 }
 
+# Backstop for TrueNAS's post-stop race (docs/truenas-api.md#vms): a libvirt domain still holding
+# the VM's UUID makes vm.create fail. Undefine it when no existing VM owns it (the VM this run
+# deleted); a domain of an existing VM is left alone — under --test that is the target VM itself.
+function Undefine_orphan_vm_domain() {
+    local TARGET_LOCATION="$1"
+    local VM="$2"
+
+    local UUID
+    local DOMAIN
+
+    UUID="$(jq -r '.uuid' "${TRANSFORMED_VM_JSON_FILE}")"
+    DOMAIN="$(Execute_command "${TARGET_LOCATION}" "virsh -r -c '${LIBVIRT_RO_URI}' domname ${UUID} 2>/dev/null | head -n1")"
+    [[ -z "${DOMAIN}" ]] && return 0
+
+    if [[ "${DOMAIN}" =~ ^([0-9]+)_ ]] \
+        && ! Execute_command "${TARGET_LOCATION}" "midclt call vm.query | jq -e 'any(.[]; .id==${BASH_REMATCH[1]})' >/dev/null"; then
+        echo "Undefining orphan libvirt domain '${DOMAIN}' (holds the UUID of VM '${VM}') on truenas-${TARGET_SERVER_ID}...${TEST_MODE:+" (Not done because of '--test' usage!)"}"
+        echo "  truenas-${TARGET_SERVER_ID} - virsh -c '${LIBVIRT_URI}' undefine --nvram ${DOMAIN}"
+        [[ -n "${TEST_MODE}" ]] && return 0
+        Execute_command "${TARGET_LOCATION}" "virsh -c '${LIBVIRT_URI}' undefine --nvram '${DOMAIN}' >/dev/null" && return 0
+        echo "Failed to undefine it; recovery: docs/operations.md#vm-orphan-libvirt-domain"
+        echo
+        return 1
+    fi
+    [[ -n "${TEST_MODE}" ]] && return 0
+    echo "Failed to create VM '${VM}': its UUID ${UUID} is held by libvirt domain '${DOMAIN}' of an existing VM."
+    echo
+    return 1
+}
+
 # Cleanup orphan zvols for a single VM on the destination
 function Audit_and_cleanup_vm_storage() {
     local TARGET_LOCATION="$1"
@@ -669,6 +702,8 @@ function Verify_and_recreate_vm() {
         return 1
     fi
 
+    Undefine_orphan_vm_domain "${TARGET_LOCATION}" "${VM}" || return 1
+
     # Create the VM shell
     echo "Creating VM '${VM}' on truenas-${TARGET_SERVER_ID} from json...${TEST_MODE:+" (Not done because of '--test' usage!)"} "
     local SHELL_JSON
@@ -835,6 +870,12 @@ function Perform_vm_replication() {
             # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
             Register_cleanup 'Warn_target_vm_state "${VM}" "${TARGET_SERVER_ID}"'
             Control_vm "${VM}" "${TARGET_VM_ID}" stop "${TARGET_LOCATION}" "${TARGET_SERVER_ID}"
+            # TrueNAS's post-stop thread polls every 5 s; a vm.delete before its next poll gets the
+            # domain re-defined as an orphan (docs/truenas-api.md#vms). vm.delete's own wait is 7 s.
+            if [[ -z "${TEST_MODE}" ]]; then
+                echo "Waiting 10 s for TrueNAS's post-stop actions before deleting the VM."
+                sleep 10
+            fi
         fi
         Delete_vm_on_destination "${TARGET_LOCATION}" "${VM}"
         Audit_and_cleanup_vm_storage "${TARGET_LOCATION}" "${VM}"

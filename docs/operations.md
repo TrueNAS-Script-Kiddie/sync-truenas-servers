@@ -107,14 +107,15 @@ and an automatic refresh would hide the problem.
 
 ## VM orphan libvirt domain
 
-When `vm.create` fails with `domain '<id>_<name>' is already defined with uuid …` (see
-[truenas-api.md](truenas-api.md#vms) and the open UUID bug in [plans/backlog.md](../plans/backlog.md)):
+A run undefines an orphan domain holding the VM's UUID itself, before `vm.create` (cause:
+[truenas-api.md](truenas-api.md#vms)). By hand only when it reports `Failed to undefine it`, or
+when `vm.create` fails outside a run with `domain '<id>_<name>' is already defined with uuid …`:
 
-1. Force-delete the ERROR-state VM — GUI *Force Delete*, or
+1. If a failed create left an ERROR-state VM: force-delete it — GUI *Force Delete*, or
    `midclt call vm.delete <id> '{"force": true}'`. Leave *Delete Virtual Machine Data* /
    `zvols` **off** so the replicated disk stays.
-2. Undefine the leftover domain:
-   `virsh -c 'qemu+unix:///system?socket=/run/truenas_libvirt/libvirt-sock' undefine <id>_<name>`
+2. Undefine the leftover domain, as root:
+   `virsh -c 'qemu+unix:///system?socket=/run/truenas_libvirt/libvirt-sock' undefine --nvram <id>_<name>`
 3. Re-run VM replication for that VM.
 
 ## A VM that won't stop

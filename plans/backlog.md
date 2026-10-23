@@ -1,21 +1,5 @@
 # Backlog — small open items
 
-## Bug: VM UUID collision on the target's delete → recreate
-
-Under `--stop-running-vms` the target rebuild intermittently fails with
-`operation failed: domain '<old-id>_<name>' is already defined with uuid <uuid>`, even with fully
-graceful stops (seen 2026-08-23 on FedoraBC and FedoraF; the same VMs succeed on other runs).
-
-Cause: `Transform_vm_definition` copies the source VM's `uuid` verbatim, so every recreate asks
-libvirt for the **same** UUID. `vm.delete` returning does not guarantee the old libvirt domain is
-already undefined — when it isn't, `vm.create` collides with it.
-
-Fix: after `Delete_vm_on_destination`, poll until the domain is gone before creating (bounded
-wait, see the wait-loop pattern). Keep the UUID in every VM mode (next item): it is the guest's
-SMBIOS UUID, and a new one on every sync would break Windows activation and UUID-bound licences.
-
-Recovery until fixed: [docs/operations.md](../docs/operations.md#vm-orphan-libvirt-domain).
-
 ## VMs: per-VM choice between "twin" and "own MAC"
 
 Today every VM is a **twin**: UUID and every NIC's `mac` are copied verbatim (only `nic_attach`,

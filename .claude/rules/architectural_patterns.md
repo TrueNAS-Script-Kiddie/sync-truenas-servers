@@ -112,8 +112,10 @@ reach `immich_db.bash` by dynamic scoping from `Perform_app_replication` — kee
   (names may contain regex characters) — ignore shellcheck SC2076 there.
 - **No `set -u` / `set -o pipefail`:** the code relies on unset-is-empty (`LOCAL_SOURCE` vs
   `REMOTE_SOURCE`, `${TEST_MODE:+…}`) and on pipelines whose early stages may fail harmlessly.
-- **VM stops are graceful only** — a forced stop orphans the libvirt domain
-  ([docs/truenas-api.md](../../docs/truenas-api.md#vms)).
+- **VM stops are graceful only** — a forced stop lets the source snapshot catch a guest that
+  hasn't shut down cleanly ([docs/truenas-api.md](../../docs/truenas-api.md#vms)).
+- **The 10 s sleep before the target's `vm.delete`** outlasts TrueNAS's 5 s post-stop poll, which
+  otherwise re-defines the deleted domain ([docs/truenas-api.md](../../docs/truenas-api.md#vms)).
 - **Stay in bash for orchestration.** Most code drives external commands; a rewrite would be
   validated only by destructive live runs. Pure data transforms (JSON in → JSON out) are the
   exception: they move to Python, testable offline ([plans/app-replication.md](../../plans/app-replication.md)).

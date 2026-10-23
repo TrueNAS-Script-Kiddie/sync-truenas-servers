@@ -56,13 +56,21 @@ transcodes, forgejo tmp. All real app data lives in host paths.
 - `vm.stop` is a **job** → wait for `SUCCESS`, then confirm `.status.state == STOPPED`.
   `vm.start` is **synchronous** → poll the state.
 - Stops must be **graceful**. A forced poweroff flips `.state` to `STOPPED` while libvirt is
-  still tearing the domain down; a following `vm.delete` then fails to undefine it, leaving an
-  orphan domain that holds the VM's UUID, and the next `vm.create` fails with
-  `domain '<id>_<name>' is already defined with uuid …`. A graceful stop reaches `STOPPED` only
-  once the domain is `SHUTOFF`. Recovery: [operations.md](operations.md#vm-orphan-libvirt-domain).
+  still tearing the domain down, so a snapshot taken then is not of a cleanly shut-down guest. A
+  graceful stop reaches `STOPPED` only once the domain is `SHUTOFF`.
+- **`vm.delete` right after a stop can leave an orphan domain.** A VM started by TrueNAS gets a
+  post-stop thread (`run_post_stop_actions`, `middlewared/plugins/vm/supervisor/supervisor.py`)
+  that polls its state every 5 s. If `vm.delete` undefines the domain before that thread's next
+  poll, the thread's health check defines it again (old `<id>_<name>`, same UUID) and the delete
+  then removes the VM record. The next `vm.create` with that UUID fails with
+  `domain '<id>_<name>' is already defined with uuid …`. `vm.delete` waits 7 s itself only when it
+  has to power the VM off. The replication waits 10 s after stopping the target and undefines a
+  remaining orphan before `vm.create`; manual recovery: [operations.md](operations.md#vm-orphan-libvirt-domain).
 - A still-booting guest ignores ACPI shutdown — `vm.query` shows `RUNNING` either way.
-- `virsh` needs TrueNAS's own socket: `virsh -c 'qemu+unix:///system?socket=/run/truenas_libvirt/libvirt-sock' …`
-  (the default `libvirtd.socket` is masked).
+- `virsh` needs TrueNAS's own sockets (the default `libvirtd.socket` is masked):
+  `virsh -c 'qemu+unix:///system?socket=/run/truenas_libvirt/libvirt-sock' …` (root; polkit
+  refuses others), or read-only for any user:
+  `virsh -r -c 'qemu+unix:///system?socket=/run/truenas_libvirt/libvirt-sock-ro' …`.
 
 ## Host tools
 
