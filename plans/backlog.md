@@ -31,12 +31,6 @@ Build it into `transform_vm` in `lib/transform.py`.
 would replace the JOBID/poll loops in `Control_app`. Check on a host first: exit codes, and that
 its output doesn't clutter the log.
 
-## Log file name per minute
-
-`LOG_FILE` (and `DB_RESTORE_LOG`) in `bin/sync_truenas_servers` are named `%Y-%m-%d_%H-%M`, so two
-runs started in the same minute share one log: the second appends to it and its `tail -f` first
-replays the previous run's output. Add seconds (`%H-%M-%S`).
-
 ## Catalog-version pre-check before `app.create` (optional)
 
 `app.available` only reports `latest_version`, so a missing version is detected only by the

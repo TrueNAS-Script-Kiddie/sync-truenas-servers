@@ -53,8 +53,8 @@ declare STOP_RUNNING_VMS
 declare START_STOPPED_APPS
 declare STOP_RUNNING_APPS
 declare EXEC_DATE="$(date +%Y-%m-%d)"
-declare LOG_FILE="${LOG_DIR}/${SCRIPT_FILENAME}.$(date +"%Y-%m-%d_%H-%M").log"
-declare DB_RESTORE_LOG="${LOG_DIR}/${SCRIPT_FILENAME}_DB_Restore.$(date +"%Y-%m-%d_%H-%M").log"
+declare LOG_FILE="${LOG_DIR}/${SCRIPT_FILENAME}.$(date +"%Y-%m-%d_%H-%M-%S").log"
+declare DB_RESTORE_LOG="${LOG_DIR}/${SCRIPT_FILENAME}_DB_Restore.$(date +"%Y-%m-%d_%H-%M-%S").log"
 declare BACKUP_OPTIONS=( "$@" )
 
 declare LOCAL_SOURCE
