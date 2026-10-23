@@ -1,0 +1,4 @@
+Verified on truenas-backup:
+- app_definition_replication --test --app=grafana: log written as
+  sync_truenas_servers.2026-10-24_00-14-51.log (seconds present); run completed normally
+  (grafana-backup running, definition skipped as expected).
