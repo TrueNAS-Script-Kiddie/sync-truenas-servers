@@ -40,7 +40,7 @@ Both servers have the same apps installed as separate instances, running at the 
 3. **The DB dump path is load-bearing.** Immich's Postgres lives in a separate dataset (`immich-pgdata-ds`) that is *not* in `app_dir_list`. `Backup_immich_DB` writes the dump to `immich-pgdata-ds/` then moves it into `immich-data-ds/backups/` specifically because `backups` *is* in `app_dir_list` — the dump piggybacks on the existing rsync. If you change either path, the restore on the target side will silently find no dump.
 
 ## Per-app naming convention
-Apps are deployed as `<app>-<server_id>` (e.g. `immich-master`, `immich-backup`). `Control_app_with_checks` builds the full name via `${APP_NAME}-${!SERVER_ID_VAR}` using indirect expansion on `LOCAL_SERVER_ID` / `REMOTE_SERVER_ID`. Container names follow `<app>-<server_id>-<component>-<N>` and are discovered dynamically with `docker ps ... | grep -E`.
+Apps are deployed as `<app>-<server_id>` (e.g. `immich-master`, `immich-backup`). `Control_app_with_checks` builds the full name via `${APP_NAME}-${!SERVER_ID_VAR}` using indirect expansion on `LOCAL_SERVER_ID` / `REMOTE_SERVER_ID`. Container names follow `ix-<app>-<server_id>-<component>-<N>` (e.g. `ix-immich-master-pgvecto-1`; greps must not anchor at `^<app>`) and are discovered dynamically with `docker ps ... | grep -E`.
 
 ## State-machine loops with timeouts
 Long operations poll with a counter and bounded sleep, then call `Background_error` on timeout. Examples: `Control_app` (midclt job state → `SUCCESS`, 60s), `Wait_for_docker_state` (60s), `Wait_for_pg_ready` (60s). Match this shape when adding a new wait loop rather than inventing a different retry strategy.

@@ -12,8 +12,11 @@
 > grafana-backup created 2026-10-23 (master→backup): no post-apply drift, serves
 > the `truenas-backup` cert. Target dataset + host paths were made by hand first.
 > grafana data replicated the same day (`data/` SQLite + `plugins/`). The Loki
-> data source in `grafana.db` still points at master (`192.168.0.10:3100`);
-> settle together with the loki/promtail/syslog-ng row.
+> data source in `grafana.db` still points at master (`192.168.0.10:3100`).
+> Inventory of every app on truenas-master done 2026-10-23 (see "Inventory
+> decisions"). Next: redesign `app_config_mappings.json` (and the `apps.json`
+> hooks) so one config covers all three layers — app definition, files inside
+> the app's data, app databases — then implement the transforms.
 > Phase 3 not started.
 
 **Goal:** close the remaining gap for failover (truenas-backup fully taking
@@ -40,13 +43,44 @@ the two in `apps.json` today. Each row stays until it works.
 
 | App | Definition replication needs | Data replication needs | Status |
 |---|---|---|---|
-| plex | — | in `apps.json` | ready for first real run |
-| immich | — | in `apps.json` (DB dump/restore) | ready for first real run |
-| grafana | ✅ `certificate_id` override (`value_overrides`, 2↔3) | ✅ `data`, `plugins` in `apps.json`; Loki data source URL in `grafana.db` stays master's | done; data source open (see loki row) |
-| forgejo | `certificate_id` override | repos + DB; the backup instance must stay passive (never two writable forges) | open — passive-instance policy to decide |
-| firefly-iii | target host paths must exist before `app.create` | Postgres DB dump/restore (Immich pattern); `APP_KEY` must match | open |
-| loki, promtail, syslog-ng | `ix-app` catalog app — payload shape unverified (phase 0 again) | per-host values (what they ship/label) to classify (phase 1) | open |
-| hermes-agent | custom app — `custom_compose_config` payload unverified; name lacks the `-<server>` suffix the code relies on | self-modifying (server is source of truth) — policy to decide | open |
+| plex | host paths, `keep_target` claim token — `--test` clean, no real run yet | ✅ selective folder list in `apps.json` (identity files stay per host) | definition: first real run pending |
+| immich | ✅ host paths | ✅ in `apps.json`; DB dump/restore 1:1 (DB has no host references) | done |
+| grafana | ✅ `certificate_id` 2↔3, `root_url` | ✅ `data`, `plugins`; **open:** Loki data source URL inside `grafana.db` (SQLite) | data-source rewrite open |
+| forgejo | `certificate_id`, `root_url` (existing rules cover them) | repos + Postgres DB (no host references, only history); **`custom/conf/app.ini`**: `DOMAIN`, `SSH_DOMAIN`, `ROOT_URL` name the IP | open. Clients follow failover via the `forgejo` SSH alias (`HostName data`). Forgejo-backup is only used on failover; push mirrors/webhooks (none today) must be disabled there |
+| firefly-iii | `app_url`, **`host_ips` = the host's own IP** (binds there; wrong IP = won't start) — existing IP rule covers it; target host paths must exist before `app.create` | Postgres DB (no host references) + `uploads`; `APP_KEY` comes with the definition | open |
+| loki, promtail, syslog-ng | `ix-app` (custom image, `:latest`): `hostname` (`<app>-master`, rewritten by the name convention), host paths; payload shape unverified | config files: **syslog-ng `syslog-ng.conf`** forwards to the IP, **promtail `config.yml`** pushes to Loki's IP; loki clean. Chain on truenas-backup must point at its own copies | open; image-digest check needed (`:latest`) |
+| hermes-agent | custom app (compose): volume path; name lacks the `-<server>` suffix the code relies on; `:latest` | content (memories, sessions) copied as-is | open; to be replaced by the official TrueNAS app — meanwhile the custom-app test case |
+
+## Inventory decisions (2026-10-23)
+
+From the inventory of all apps on truenas-master (app definition, the app's own
+files/DBs, container volumes):
+
+- **Host references live in three layers**, all must be rewritten for
+  truenas-backup to be independent: app definition (cert id, root/app URL,
+  firefly-iii's `host_ips`, host paths), config files inside the app's data
+  (forgejo `app.ini`; syslog-ng `syslog-ng.conf`; promtail `config.yml`), and
+  app databases (grafana's SQLite data source). Checked as root: the Postgres
+  DBs of immich and firefly-iii have no host references; forgejo's only hold
+  history (Actions run payloads) and an SSH key's name label — copied as-is.
+  Plex's library DB has none.
+- **Logging chain** (router → syslog-ng → promtail → loki → grafana): on
+  truenas-backup every link points at truenas-backup's own copy. The router
+  itself is repointed by hand on failover.
+- **Immich, Plex:** current mechanisms (DB dump/restore; selective folder
+  list) stay; they only move into the new config shape.
+- **`:latest` images** (syslog-ng, promtail, loki, hermes-agent): keep
+  `:latest`; add a check that compares the running image digest on both hosts
+  and skips the app when they differ. Today's version checks compare the
+  `ix-app` wrapper version, identical on both, so they miss this.
+- **ix-volumes** hold only caches/temp (Redis, ML cache, transcodes, tmp) that
+  rebuild themselves — `app.delete` is acceptable as a method.
+- **Forgejo:** clients reach it via the `forgejo` SSH alias, now `HostName
+  data`, so they follow the failover. No push mirrors/webhooks today; if added,
+  disable them on forgejo-backup.
+- **hermes-agent:** content (memories, sessions) is copied as-is, not
+  rewritten. To be replaced by the official TrueNAS app; meanwhile the test
+  case for custom (compose) apps.
 
 ## Non-negotiable guardrails (in addition to the global ones)
 

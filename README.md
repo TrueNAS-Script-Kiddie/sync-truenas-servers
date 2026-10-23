@@ -153,7 +153,7 @@ These are hardcoded or derived, not configurable:
 - Datasets under `<pool>/encrypted-ds/` — `app-ds`, `vm-ds`, `media-ds`. Encrypted datasets must
   be unlocked and mounted before a run; the script aborts if they are not.
 - Apps are installed per host as `<app>-<server_id>` (`immich-master`, `immich-backup`), with
-  containers named `<app>-<server_id>-<component>-<N>`.
+  containers named `ix-<app>-<server_id>-<component>-<N>` (`ix-immich-master-pgvecto-1`).
 
 ## Repo layout
 
