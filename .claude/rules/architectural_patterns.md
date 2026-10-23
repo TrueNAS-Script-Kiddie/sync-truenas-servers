@@ -114,6 +114,9 @@ reach `immich_db.bash` by dynamic scoping from `Perform_app_replication` — kee
   `REMOTE_SOURCE`, `${TEST_MODE:+…}`) and on pipelines whose early stages may fail harmlessly.
 - **VM stops are graceful only** — a forced stop lets the source snapshot catch a guest that
   hasn't shut down cleanly ([docs/truenas-api.md](../../docs/truenas-api.md#vms)).
+- **Any `zfs_autobackup` failure aborts the run.** Within a scope it already continues past a
+  failed dataset. Carrying on to later subtasks would start a VM on a stale disk, can't tell a
+  crash (also exit 1) from one failed dataset, and would report a stale backup as a success.
 - **The 10 s sleep before the target's `vm.delete`** outlasts TrueNAS's 5 s post-stop poll, which
   otherwise re-defines the deleted domain ([docs/truenas-api.md](../../docs/truenas-api.md#vms)).
 - **Stay in bash for orchestration.** Most code drives external commands; a rewrite would be

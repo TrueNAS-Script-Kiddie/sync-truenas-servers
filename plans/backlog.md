@@ -25,13 +25,6 @@ hardware ID already differs between the hosts.
 
 Build in the VM transform after its Python port ([app-replication.md](app-replication.md) step 1).
 
-## Exit-code-aware partial failure for `zfs_autobackup`
-
-Its exit code 1–254 = that many datasets failed, the rest completed; 255 = crash. Today any
-non-zero aborts the whole run. Treat 1–254 as a partial failure and let the remaining subtasks
-(rollup, later scopes) run. Limits the damage of [dataset busy](../docs/dataset-busy-investigation.md),
-doesn't address its cause.
-
 ## `midclt call -job` instead of polling (optional)
 
 `midclt call -job app.stop <name>` blocks until the job ends and exits non-zero on failure, which

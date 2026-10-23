@@ -124,5 +124,3 @@ from the deployed copy, never from `/tmp`.
 2. If `freeing` correlates, confirm in the ZFS source which paths return EBUSY from
    `dmu_recv_begin_check()` before building anything. A fix would then be a bounded wait for
    `freeing` to drain before `zfs_autobackup` runs — in this wrapper.
-3. Independent of the cause: exit-code-aware partial-failure handling, so one failed dataset
-   doesn't abort the rest of the run ([plans/backlog.md](../plans/backlog.md)).
