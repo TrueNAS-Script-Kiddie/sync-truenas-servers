@@ -2,6 +2,14 @@
 # lib/immich_db.bash
 # Immich PostgreSQL DB backup and restore functions
 
+# Cleanup undo for Backup_immich_DB: an app stop + start brings every container back in compose
+# order (a docker start per container doesn't, and the one-shot 'permissions' container exits).
+function Restart_source_immich() {
+    echo -n "Restarting ${SOURCE_LOCATION} immich-${SOURCE_SERVER_ID}, as the DB backup stopped some of its containers."
+    Control_app "immich-${SOURCE_SERVER_ID}" stop "${SOURCE_LOCATION}"
+    Control_app "immich-${SOURCE_SERVER_ID}" start "${SOURCE_LOCATION}"
+}
+
 function Backup_immich_DB() {
     echo "### Making a backup of the Immich Postgres DB ###"
     echo
@@ -20,6 +28,7 @@ function Backup_immich_DB() {
     fi
 
     # Stop the containers
+    Register_cleanup 'Restart_source_immich'
     Control_docker_containers "${SOURCE_LOCATION}" "stop" "${CONTAINERS_TO_STOP[@]}"
 
     # Start the required container
@@ -38,6 +47,8 @@ function Backup_immich_DB() {
         # Prune old dumps on the source; rsync --delete mirrors this to the target.
         Execute_command "${SOURCE_LOCATION}" "find \"/mnt/${SOURCE_POOL}/encrypted-ds/app-ds/immich-ds/immich-data-ds/backups/\" -maxdepth 1 -name '*_immich_backup.dump.sql.gz' -mtime +\"${DUMP_RETENTION_DAYS:-365}\" -delete"
     fi
+    # Normal path: the caller's app stop + start right after this brings the containers back.
+    Unregister_cleanup
     echo
     echo "### Making a backup of the Immich Postgres DB has completed successfully ###"
     echo

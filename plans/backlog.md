@@ -48,12 +48,6 @@ non-zero aborts the whole run. Treat 1–254 as a partial failure and let the re
 (rollup, later scopes) run. Limits the damage of [dataset busy](../docs/dataset-busy-investigation.md),
 doesn't address its cause.
 
-## Apps stopped for the data copy aren't restarted on abort
-
-`Perform_app_replication` stops the app on both hosts (`Control_app_with_checks`) without a
-cleanup-stack entry, so an abort during the rsync or a hook leaves them stopped. Register a
-restart of what this run stopped, like the VM and `--start-stopped-apps` paths do.
-
 ## `Backup_immich_DB` dumps without waiting for Postgres
 
 It starts the `pgvecto` container and runs `pg_dumpall` straight away. Low risk (existing

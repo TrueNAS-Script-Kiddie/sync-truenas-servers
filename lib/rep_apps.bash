@@ -59,6 +59,24 @@ function Start_app_if_stopped() {
     fi
 }
 
+# Cleanup undo for the data copy: the target app is left stopped on abort, as its data may be
+# a partial copy. Warns only if this run stopped it and it was running before the run.
+# Usage: Warn_target_app_state <APP_NAME>
+function Warn_target_app_state() {
+    local APP_NAME="$1"
+    local -n l_TARGET_STOPPED_LIST="${TARGET_LOCATION^^}_STOPPED_LIST"
+
+    [[ "${TARGET_STARTED_BY_US}" == "true" ]] && return 0
+    # shellcheck disable=SC2076  # literal substring match, not regex
+    [[ " ${l_TARGET_STOPPED_LIST[*]} " =~ " ${APP_NAME} " ]] || return 0
+    echo
+    echo "  !!! WARNING: app '${APP_NAME}-${TARGET_SERVER_ID}' was running on truenas-${TARGET_SERVER_ID} before this run."
+    echo "  !!! The run stopped it to copy its data, then aborted; its data may be a partial copy,"
+    echo "  !!! so it is left stopped. Rerun the replication, then start it in the GUI:"
+    echo "  !!! Apps → Installed → ${APP_NAME}-${TARGET_SERVER_ID} → Start."
+    echo
+}
+
 # Explain a source/target app version mismatch and how to fix it in the GUI.
 # Usage: Print_app_version_mismatch <APP_NAME> <WHAT> <SOURCE_VERSION> <TARGET_VERSION>
 function Print_app_version_mismatch() {
@@ -125,8 +143,9 @@ function Control_app_with_checks() {
         esac
 
         if (( PERFORM_ACTION )); then
-            Control_app "${FULL_APP_NAME}" "${ACTION}" "${LOCATION}"
+            # Listed before stopping, so an abort's restart also covers a stop that timed out.
             [[ "${ACTION}" == "stop" ]] && STOPPED_LIST_REF+=( "${APP_NAME}" )
+            Control_app "${FULL_APP_NAME}" "${ACTION}" "${LOCATION}"
         fi
     done
     unset -n STOPPED_LIST_REF
@@ -148,6 +167,8 @@ function Perform_app_replication() {
     local SIDE
     local STATE_VAR
     local SERVER_ID_VAR
+    local PATH_VAR
+    local LOCATION_VAR
     local SUCCEEDED=0
     local SKIPPED=0
     local APP_NAME
@@ -189,7 +210,9 @@ function Perform_app_replication() {
     fi
 
     for APP_JSON in "${SELECTED_APP_JSON_LIST[@]}"; do
+        # shellcheck disable=SC2034  # read via nameref in Control_app_with_checks
         REMOTE_STOPPED_LIST=()
+        # shellcheck disable=SC2034  # read via nameref in Control_app_with_checks
         LOCAL_STOPPED_LIST=()
         SOURCE_STARTED_BY_US="false"
         TARGET_STARTED_BY_US="false"
@@ -236,6 +259,24 @@ function Perform_app_replication() {
             || Background_error "ERROR: '${FULL_SOURCE_PATH}' does not exist. Is the dataset mounted and unlocked?"
         Execute_command "${TARGET_LOCATION}" "test -d \"${FULL_TARGET_PATH#*:}\"" \
             || Background_error "ERROR: '${FULL_TARGET_PATH}' does not exist. Is the dataset mounted and unlocked?"
+
+        # Every data folder must exist on both sides before anything is stopped.
+        PRECONDITION_MET="true"
+        for APP_DIR_TO_RSYNC in "${APP_DIRS_TO_RSYNC_LIST[@]}"; do
+            for SIDE in SOURCE TARGET; do
+                PATH_VAR="FULL_${SIDE}_PATH"
+                LOCATION_VAR="${SIDE}_LOCATION"
+                SERVER_ID_VAR="${SIDE}_SERVER_ID"
+                Execute_command "${!LOCATION_VAR}" "test -d \"${!PATH_VAR#*:}/${APP_DIR_TO_RSYNC}\"" && continue
+                echo "Replication skipped for app ${APP_NAME}: '${!PATH_VAR#*:}/${APP_DIR_TO_RSYNC}' does not exist on TrueNAS-${!SERVER_ID_VAR^}. Is the application properly installed?"
+                PRECONDITION_MET="false"
+            done
+        done
+        if [[ "${PRECONDITION_MET}" == "false" ]]; then
+            echo
+            ((SKIPPED++))
+            continue
+        fi
 
         # Hooks that run inside the app (Immich: the DB dump on the source, the restore on the
         # target) need it RUNNING on that side. Both sides are checked before either is started,
@@ -286,17 +327,16 @@ function Perform_app_replication() {
         PRE_ACTION="$(jq -r '.pre_action // empty' <<< "${APP_JSON}")"
         [[ -n "${PRE_ACTION}" ]] && "$PRE_ACTION"
 
-        # Stop the application locally and remotely
+        # Stop the application locally and remotely. On abort, restart the source if this stop
+        # stopped it (its data is only read); the target may hold a partial copy, so only warn.
+        # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
+        Register_cleanup 'Warn_target_app_state "${APP_NAME}"'
+        # shellcheck disable=SC2016  # single-quoted on purpose: expand at cleanup (fire) time
+        Register_cleanup 'Control_app_with_checks "${APP_NAME}" start "${SOURCE_LOCATION}"'
         Control_app_with_checks "${APP_NAME}" stop "local" "remote"
         echo
 
         for APP_DIR_TO_RSYNC in "${APP_DIRS_TO_RSYNC_LIST[@]}"; do
-            # Check if the source and target directories exist
-            Execute_command "${SOURCE_LOCATION}" "test -d \"${FULL_SOURCE_PATH#*:}/${APP_DIR_TO_RSYNC}\"" \
-                || Background_error "ERROR: '${FULL_SOURCE_PATH}/${APP_DIR_TO_RSYNC}' does not exist. Is the application properly installed?"
-            Execute_command "${TARGET_LOCATION}" "test -d \"${FULL_TARGET_PATH#*:}/${APP_DIR_TO_RSYNC}\"" \
-                || Background_error "ERROR: '${FULL_TARGET_PATH}/${APP_DIR_TO_RSYNC}' does not exist. Is the application properly installed?"
-
             # Perform the rsyncs
             echo "rsync ${TEST_MODE:+--dry-run} -e \"ssh -F ${SSH_CONFIG_FILE}\" --delete -aHX \"${FULL_SOURCE_PATH}/${APP_DIR_TO_RSYNC}/\" \"${FULL_TARGET_PATH}/${APP_DIR_TO_RSYNC}/\""
             if rsync ${TEST_MODE:+--dry-run} -e "ssh -F ${SSH_CONFIG_FILE}" --delete -aHX "${FULL_SOURCE_PATH}/${APP_DIR_TO_RSYNC}/" "${FULL_TARGET_PATH}/${APP_DIR_TO_RSYNC}/"; then
@@ -309,6 +349,8 @@ function Perform_app_replication() {
 
         # Start the application locally and remotely if they were stopped
         Control_app_with_checks "${APP_NAME}" start "local" "remote"
+        Unregister_cleanup
+        Unregister_cleanup
         echo
 
         # Perform post-action function from the json (for example: Restore Immich Postgres DB)

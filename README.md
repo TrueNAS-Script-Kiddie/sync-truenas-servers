@@ -124,12 +124,12 @@ Worth knowing:
 - **It always exits 0.** Success or failure is reported by email and in `logs/`; don't chain `&&`
   off a run.
 - **A failing item is skipped, a failing run aborts.** An app or VM in the wrong state, not
-  installed, or on a different version is skipped with the fix printed, and counted in the
-  summary. Anything that makes the run itself unsafe aborts it, after restoring: unmounted
-  datasets are remounted, a source VM it stopped is started, apps changed by
-  `--start-stopped-apps`/`--stop-running-apps` return to their state. Not restored: apps stopped
-  for the data copy (start them by hand), and a target VM it stopped (a warning names it — it was
-  mid-rebuild).
+  installed, on a different version, or missing a data folder is skipped with the fix printed,
+  and counted in the summary. Anything that makes the run itself unsafe aborts it, after
+  restoring: unmounted datasets are remounted, a source VM or source app it stopped is started
+  (Immich also when the DB dump fails), apps changed by
+  `--start-stopped-apps`/`--stop-running-apps` return to their state. Not restored: a target app
+  or VM it stopped (a warning names it — its data may be a partial copy, or it was mid-rebuild).
 - **Concurrent runs are refused:** a lock in `logs/` blocks a second run on the same host, and the
   peer's lock is checked too.
 - `logs/` and `tmp/` are runtime only; `tmp/` keeps the per-VM and per-app JSON of the last run —
