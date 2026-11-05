@@ -6,7 +6,7 @@ Open work only. A plan is deleted once implemented; what stays true moves into t
 
 | Plan | What |
 |---|---|
-| [app-replication.md](app-replication.md) | Replicate every app fully independent of the other host: config redesign, rewrites inside app data, image-digest check, name convergence |
+| [replication-redesign.md](replication-redesign.md) | Redesign of app, VM and container replication in phases: requirements, design, comparison with the old implementation, implementation |
 | [backlog.md](backlog.md) | Small items: VM twin/own-MAC choice, minor improvements |
 
 The open "dataset is busy" investigation is not a plan: [docs/dataset-busy-investigation.md](../docs/dataset-busy-investigation.md).

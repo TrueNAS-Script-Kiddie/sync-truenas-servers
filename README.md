@@ -26,7 +26,7 @@ So this syncs content and definitions between two installs rather than priming a
 Only genuinely per-host values differ: IP/hostname, certificate, pool paths, external identities
 (Plex claim/GUID) and the name suffix. Everything else — ports included — is identical on both
 hosts, so repointing `data` is transparent. The goal covers **every** app on truenas-master,
-current and future; [plans/app-replication.md](plans/app-replication.md) tracks the way there.
+current and future; [plans/replication-redesign.md](plans/replication-redesign.md) tracks the way there.
 
 VMs are the exception: each is an exact twin (same UUID and MAC on both hosts), so failover is
 transparent but only one copy may run at a time. A per-VM choice to give truenas-backup its own
@@ -177,7 +177,7 @@ Hardcoded or derived, not configurable:
 - **Intermittent `dataset is busy`** during ZFS receive — cause unknown; diagnostics fire on
   failure. [docs/dataset-busy-investigation.md](docs/dataset-busy-investigation.md).
 - **Host references inside app data aren't rewritten yet** (grafana's Loki data source, forgejo's
-  `app.ini`, syslog-ng/promtail config) — [plans/app-replication.md](plans/app-replication.md).
+  `app.ini`, syslog-ng/promtail config) — [plans/replication-redesign.md](plans/replication-redesign.md).
 
 Validation is `bash -n`, `shellcheck -x`, offline unit tests of the transforms
 ([tests/](tests/)) and `--test` runs against the real servers.

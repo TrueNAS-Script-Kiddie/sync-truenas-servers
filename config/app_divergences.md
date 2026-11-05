@@ -43,7 +43,7 @@ Plex Web → Settings → Network); Plex transcode storage `temporary`.
 
 ## Inside the app's own data (not in `app.config`)
 
-Not handled yet — [plans/app-replication.md](../plans/app-replication.md).
+Not handled yet — [plans/replication-redesign.md](../plans/replication-redesign.md).
 
 | App | Location | Value on master |
 |---|---|---|
