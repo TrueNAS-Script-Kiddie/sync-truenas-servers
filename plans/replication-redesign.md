@@ -40,7 +40,9 @@ chat never has to extract anything from TrueNAS itself.
 - **Scope:** every app (grafana, immich, plex, forgejo, firefly-iii, syslog-ng, promtail, loki,
   hermes-agent), every VM (FedoraBC, FedoraF), TrueNAS containers (none in use: their definition
   format from TrueNAS docs/API, marked hypothetical), and the host level (pools and dataset
-  layout, certificates, NICs, network).
+  layout, certificates, NICs, network). Plus dataset replication: every dataset with its
+  `autobackup:*` properties (where set, where inherited), and which workload depends on which
+  dataset (Plex on `media-ds`, VMs on their zvols).
 - **Evidence** (`plans/redesign/evidence/`, gitignored): from **both** hosts — the master/backup
   difference is the strongest evidence of what is per-host. Definitions (`app.config`,
   `app.query`, `vm.query`, compose files), image tags and digests, every host-path mount and
@@ -126,6 +128,11 @@ A fresh chat designs how replication is specified, from `plans/redesign/requirem
 - **Requirements:** (1) easy for the user to understand and modify; (2) unambiguous and
   deterministic for the sync app; (3) flexible enough for every current workload and, as far as
   foreseeable, future ones.
+- **Fixed:** `zfs_autobackup` and how it is run stay. Workload → dataset dependencies are
+  specified.
+- **To decide:** whether dataset selection moves into the spec. If so, the spec classifies every
+  dataset (replicated or deliberately not), and a property that doesn't match it or a dataset it
+  doesn't classify fails the run before anything changes.
 - **Free:** the form (JSON or something better), one spec or several (per workload kind, per kind
   of app), and the operations it offers (copy files/folders/datasets; transform files, configs,
   databases; export/import; …).
