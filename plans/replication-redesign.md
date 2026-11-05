@@ -22,6 +22,8 @@ implementation mined for ideas worth keeping.
 - **Every phase ends with the user's review and a commit.** The handoff between phases is files
   in `plans/redesign/`, never chat history.
 - **Ask only what the material doesn't answer;** quote what was checked.
+- **Each phase is a safe stopping point.** Phase 1 alone already answers "what differs between my
+  two installs, and why".
 
 | Phase | Output | Status |
 |---|---|---|
@@ -41,8 +43,10 @@ chat never has to extract anything from TrueNAS itself.
   layout, certificates, NICs, network).
 - **Evidence** (`plans/redesign/evidence/`, gitignored): from **both** hosts — the master/backup
   difference is the strongest evidence of what is per-host. Definitions (`app.config`,
-  `app.query`, `vm.query`, compose files), image tags and digests, every host-path mount, file
-  trees, config files and databases **in full** (SQLite files, Postgres dumps). Two exceptions:
+  `app.query`, `vm.query`, compose files), image tags and digests, every host-path mount and
+  ix-volume, file trees, config files and databases **in full** (SQLite files, Postgres dumps),
+  the API method signatures (`core.get_methods` for the app, VM and container methods) and each
+  host's catalog versions (`app.available`). Two exceptions:
   - bulk user content (photos, media, Plex `Metadata`, Loki chunks, git repos): tree, sizes and
     samples only — hundreds of GB with no design value beyond kind and size;
   - secret values masked, key and location kept: the design needs *that* and *where*, never the
@@ -54,14 +58,26 @@ chat never has to extract anything from TrueNAS itself.
   - **per workload:** every item classified (copy as-is / keep per host / rewrite / regenerable
     cache / runtime state / never touch), with the reason and the evidence behind it; its
     constraints (order, state, versions);
+  - **drift:** a master/backup difference that isn't per-host by nature (a port, a limit, a
+    toggle). Listed for the user to converge on the hosts — never specified, or the design
+    models noise;
   - **general:** the run-level requirements, restated from README, AGENTS.md and
     `.claude/rules/architectural_patterns.md` without their implementation: failover and
     failback, dual-active hosts, VMs as twins (one copy running at a time), manual runs only,
     `--test` changes nothing but shows everything, skip an item vs abort the run, restore the
-    previous state on failure, the result email, secrets never in logs or email;
+    previous state on failure, the result email, secrets never in logs or email; a running
+    target may be a test in progress, so it is overwritten only on an explicit flag, separate
+    from starting a stopped one;
   - **platform facts:** verified TrueNAS behaviour ([docs/truenas-api.md](../docs/truenas-api.md))
     as-is.
+- **Every fact cites its evidence.** Docs, this plan and any model's memory are hypotheses until
+  confirmed on the hosts — including API payload shapes.
 - **Known requirements to verify and complete** — carried over, not to be trusted blindly:
+  - The target gets the source's exact catalog version, never silently `latest`. Catalogs can
+    differ per host; a version the target lacks skips the workload with the GUI fix.
+  - After an apply, the target's actual state is compared with what the transform predicted; a
+    difference is reported.
+  - Data replication needs the app installed on both hosts, so its definition goes first.
   - Host references (2026-10-23 inventory, [config/app_divergences.md](../config/app_divergences.md)):
     in definitions — host paths, certificate id, URLs (grafana, forgejo, firefly-iii),
     firefly-iii's bind IP, `hostname` (syslog-ng, promtail, loki), hermes-agent's compose volume;
@@ -129,17 +145,20 @@ the design is updated.
 
 ### Phase 4 — Implement
 
-- **Per workload, `--test` first.** Old and new paths coexist until a workload has passed a real
-  run; then its old path goes.
+- **Per workload, `--test` first, in both directions.** Old and new paths coexist until a
+  workload has passed a real run; then its old path goes. The first real run of each new kind of
+  operation is on a throwaway app (as it-tools was for `app.create`/`app.update`).
 - **Rollout order** (from the old plan, open to the design): loki/promtail/syslog-ng, forgejo,
   firefly-iii, hermes-agent; plex's first real definition run. Before each workload's first real
   run, check its `--test` output for unmasked secrets.
 - **App definitions join `--subtask=all`** once they have survived supervised runs in both
   directions.
-- **Name convergence**, one app at a time: on truenas-backup first, delete the suffixed app
-  (host-path data stays), recreate it under the bare name, replicate data, test end to end
-  (doubles as a failover drill); then the same on truenas-master in the other direction; finally
-  remove the suffix handling.
+- **Name convergence**, scheduled, not drifted into; one app at a time, with a per-app switch so
+  the tool keeps working throughout. On truenas-backup first: delete the suffixed app (check
+  the delete dialog leaves host-path data and ix-volumes alone), recreate it under the bare name,
+  replicate data, test end to end (doubles as a failover drill). Then truenas-master, recreated
+  from truenas-backup's definition (`backup_to_master`). Finally remove the switch and the suffix
+  handling.
 - **End:** durable content (requirements catalogue, spec reference) moves to `docs/`;
   `config/app_divergences.md` is replaced; `plans/redesign/` and this plan are deleted.
 
