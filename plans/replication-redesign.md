@@ -27,6 +27,14 @@ mined for ideas worth keeping.
   holding only copies of `plans/redesign/requirements/` and `evidence/` (gitignored there too)
   and writes the prompt — goal, inputs, exit criteria; file paths, never summaries; short, so it
   doesn't steer the design. The user starts the session in that folder.
+- **Phases 1–3 change nothing on either host.** The chat only reads there and never uses `sudo`
+  (its truenas-backup login has passwordless `sudo`; its truenas-master login doesn't).
+  Every command handed to the user to run as root only reads, and says so with what it does; the
+  single write is the collector's archive file. Something that needs changing on a host (drift)
+  is recorded for the user, never done as part of these phases.
+- **Phase 4 changes the hosts only through the tool,** in runs the user starts: `--test` first,
+  then the real run. Deletes (`app.delete` in the name convergence) are shown by `--test` and
+  confirmed by the user per app.
 - **Every phase ends with the user's review and a commit.** The handoff — between phases and
   between sittings — is files, never chat history: the two status tables below and
   `plans/redesign/`.
@@ -74,7 +82,10 @@ chat never has to extract anything from TrueNAS itself.
   `media-ds`, VMs on their zvols), and snapshot rollup: which datasets are thinned, with which
   intervals, against which Snapshot Lifetime.
 - **Evidence** (`plans/redesign/evidence/`, gitignored): from **both** hosts — the master/backup
-  difference is the strongest evidence of what is per-host. Definitions (`app.config`,
+  difference is the strongest evidence of what is per-host. truenas-backup has only grafana,
+  immich and plex installed; the other six apps have evidence from truenas-master alone, so what
+  is per-host in them rests on the token scan and the app's documentation, and is marked as
+  unconfirmed until the app runs on truenas-backup. Definitions (`app.config`,
   `app.query`, `vm.query`, compose files), app state, image tags and digests, every host-path
   mount and ix-volume, file trees with numeric owner, mode and ACL (`rsync -a` copies numeric
   ids, and the hosts' users differ), config files in full, the API method signatures
@@ -101,7 +112,7 @@ chat never has to extract anything from TrueNAS itself.
       only (keys, no values).
 - **Collection:** `tools/collect-evidence.sh` (deployed by the SFTP watcher, like
   `tools/mountwatch.sh`; `plans/` is never uploaded), read-only, run by the user as root on each
-  host (Claude's SSH users can't call `midclt`). Writes one archive readable by the non-root SSH
+  host (the chat's logins can't call `midclt` without `sudo`, which it doesn't use). Writes one archive readable by the non-root SSH
   user, so it can be copied to the desktop. Re-runnable for a new workload later.
   - **Leak check:** before finishing, the collector searches its own archive for every secret
     value it masked and fails on a hit. The user reviews the archive before any chat reads it.
