@@ -3,3 +3,4 @@ logs/
 tmp/
 config-mapping-examples/
 .claude/settings.local.json
+plans/redesign/evidence/
