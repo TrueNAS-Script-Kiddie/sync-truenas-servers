@@ -46,7 +46,7 @@ mined for ideas worth keeping.
 
 | Phase | Output | Status |
 |---|---|---|
-| 1. Requirements | `plans/redesign/requirements/`, `plans/redesign/evidence/` | not started |
+| 1. Requirements | `plans/redesign/requirements/`, `plans/redesign/evidence/` | in progress — collector covers apps with files and SQLite; Postgres, VMs, host level and the `general` / `implementation constraints` / `platform facts` files still to do |
 | 2. Spec design | the phase 2 Forgejo repo, copied to `plans/redesign/design/` | — |
 | 3. Compare with the old implementation | `plans/redesign/comparison.md`, design updated | — |
 | 4. Implement | code, config, docs; `plans/redesign/` removed | — |
@@ -55,7 +55,7 @@ Per workload (phases 1 and 4 advance one row at a time):
 
 | Workload | 1. Catalogue entry | 4. `--test`, both directions | 4. Real run | 4. Token scan clean |
 |---|---|---|---|---|
-| grafana (pilot) | — | — | — | — |
+| grafana (pilot) | done — [grafana.md](redesign/requirements/grafana.md); 4 open questions in its §8 | — | — | — |
 | immich | — | — | — | — |
 | plex | — | — | — | — |
 | forgejo | — | — | — | — |
